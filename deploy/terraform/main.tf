@@ -72,7 +72,7 @@ resource "aws_security_group" "web" {
     ipv6_cidr_blocks = ["::/0"]
   }
   egress {
-    description      = "Outbound: package installs, S3, SSM, Groq API, Let's Encrypt"
+    description      = "Outbound: package installs, S3, SSM, Groq API, Lets Encrypt"
     from_port        = 0
     to_port          = 0
     protocol         = "-1"
