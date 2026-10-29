@@ -1,0 +1,301 @@
+<title>RingBreaker Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column (~760px) for prose, figures break out to ~1180px; same identity as the RingBreaker console. */
+:root{
+  --bg:#f5f6f8; --surface:#ffffff; --surface-2:#eef1f5; --ink:#141a24; --ink-2:#4a5568; --ink-3:#7b8597; --line:#d5dbe4;
+  --gold:#b7790f; --gold-soft:rgba(183,121,15,.12); --blue:#2f6fc4; --blue-soft:rgba(47,111,196,.10); --violet:#6a5acd; --violet-soft:rgba(106,90,205,.10);
+  --good:#1a8a3a; --bad:#c43c3c;
+  --display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif; --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0a0d13; --surface:#11161f; --surface-2:#171e2a; --ink:#e6ebf3; --ink-2:#a5b0c4; --ink-3:#6c7891; --line:#28324a;
+  --gold:#ffcf6b; --gold-soft:rgba(255,207,107,.12); --blue:#8fb4ff; --blue-soft:rgba(143,180,255,.10); --violet:#a99cf0; --violet-soft:rgba(169,156,240,.10);
+  --good:#4fd17a; --bad:#ff8a8a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0a0d13; --surface:#11161f; --surface-2:#171e2a; --ink:#e6ebf3; --ink-2:#a5b0c4; --ink-3:#6c7891; --line:#28324a;
+  --gold:#ffcf6b; --gold-soft:rgba(255,207,107,.12); --blue:#8fb4ff; --blue-soft:rgba(143,180,255,.10); --violet:#a99cf0; --violet-soft:rgba(169,156,240,.10);
+  --good:#4fd17a; --bad:#ff8a8a; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15.5px/1.65 var(--sans);margin:0}
+.page{max-width:1220px;margin:0 auto;padding-block:40px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.col{max-width:780px}
+h1,h2{font-family:var(--display);letter-spacing:-.015em;text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.1}
+h2{font-size:24px;margin-top:56px}
+h3{font-size:15px;margin:22px 0 6px}
+p{margin:12px 0}
+.eyebrow{font:600 11.5px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.lede{font-size:18px;color:var(--ink-2)}
+code,.mono{font-family:var(--mono);font-size:.88em}
+.num{font-variant-numeric:tabular-nums}
+figure{margin:22px 0 8px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 18px 12px}
+figure .scroll{overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;min-width:760px}
+figure.small svg{min-width:640px}
+figcaption{font-size:13.5px;color:var(--ink-2);margin-top:10px;max-width:880px}
+figcaption b{color:var(--ink)}
+/* svg vocabulary */
+.bx{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.bx.hot{fill:var(--gold-soft);stroke:var(--gold)}
+.bx.cold{fill:var(--blue-soft);stroke:var(--blue)}
+.bx.act{fill:var(--violet-soft);stroke:var(--violet)}
+.bx.ext{fill:var(--surface-2);stroke:var(--line);stroke-dasharray:4 3}
+.t{fill:var(--ink);font:600 12.5px var(--sans)}
+.s{fill:var(--ink-2);font:11px var(--sans)}
+.m{fill:var(--ink-3);font:10.5px var(--mono)}
+.lbl{fill:var(--ink-2);font:italic 10.5px var(--sans)}
+.lane{fill:var(--ink-3);font:600 10.5px var(--sans);letter-spacing:.09em}
+.ar{fill:none;stroke:var(--ink-3);stroke-width:1.4}
+.ar.hot{stroke:var(--gold);stroke-width:2}
+.ar.cold{stroke:var(--blue)}
+.ar.act{stroke:var(--violet)}
+.head{fill:var(--ink-3)}.head.hot{fill:var(--gold)}.head.cold{fill:var(--blue)}.head.act{fill:var(--violet)}
+.band{fill:var(--surface-2)}
+.grid{stroke:var(--line);stroke-width:1}
+.money{fill:var(--gold)}
+.good{fill:var(--good)}.bad{fill:var(--bad)}
+.goodl{stroke:var(--good);stroke-width:3}.badl{stroke:var(--bad);stroke-width:3}
+.danger{fill:var(--bad);opacity:.10}
+/* tables & notes */
+.tw{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:680px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);font-weight:600;background:var(--surface-2)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:600;white-space:nowrap}
+.tag{display:inline-block;font:500 11px var(--mono);padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+.dec{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:16px}
+.dec div{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.dec h3{margin:0 0 6px;font-size:15px}
+.dec p{margin:0;font-size:14px;color:var(--ink-2)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12.5px;color:var(--ink-2);margin:6px 0 0}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:22px;height:0;border-top:2px solid var(--c)}
+.facts{display:flex;flex-wrap:wrap;gap:10px 28px;margin:22px 0 0}
+.facts div{min-width:140px}.facts b{display:block;font:700 24px var(--display);font-variant-numeric:tabular-nums}.facts span{font-size:13px;color:var(--ink-3)}
+</style>
+
+<div class="page">
+<header class="col">
+  <div class="eyebrow">RingBreaker · system design</div>
+  <h1>Catching mule rings before the money leaves</h1>
+  <p class="lede">The architecture as built, the production design on AWS, and the one constraint that shapes both: a mule account forwards victim money within minutes, so detection that runs the next morning finds an empty account.</p>
+  <div class="facts">
+    <div><b class="num">4–95 min</b><span>mule forwards victim money</span></div>
+    <div><b class="num">~2 s</b><span>target: credit to debit-freeze</span></div>
+    <div><b class="num">40%</b><span>of victims ever file a complaint</span></div>
+    <div><b>ap-south-1</b><span>payment data stays in India</span></div>
+  </div>
+</header>
+
+<section class="col">
+<h2>The constraint: a race against the forward</h2>
+<p>Everything below follows from this timeline. A batch system can find the whole ring, but only after the money is gone. A streaming system can stop the first forward, but only if the features it needs (how fast this account usually moves money, who it pays, whether its phone is shared) are already computed. So the production design runs two paths: a fast one that scores every credit, and a slow one that builds the graph and the model the fast path depends on.</p>
+</section>
+<figure class="small">
+  <div class="scroll">
+  <svg viewBox="0 0 1060 250" role="img" aria-label="Timeline on a log scale from the moment a victim's money lands. A streaming scorer acts at about 2 seconds, before the mule forwards the money between 4 and 95 minutes and cashes out within 1 to 3 hours. A nightly batch scores about 14 hours later, after the money has gone.">
+    <defs>
+      <marker id="tl-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head"/></marker>
+    </defs>
+    <!-- forwarding + cash-out window -->
+    <rect x="554" y="34" width="301" height="160" class="danger"/>
+    <text x="704" y="28" text-anchor="middle" class="s">money is forwarded, then cashed out</text>
+    <!-- axis -->
+    <line x1="120" y1="200" x2="1030" y2="200" class="grid"/>
+    <g class="m" text-anchor="middle">
+      <line x1="120" y1="196" x2="120" y2="204" class="grid"/><text x="120" y="220">0 s</text>
+      <line x1="175" y1="196" x2="175" y2="204" class="grid"/><text x="175" y="220">1 s</text>
+      <line x1="445" y1="196" x2="445" y2="204" class="grid"/><text x="445" y="220">1 min</text>
+      <line x1="627" y1="196" x2="627" y2="204" class="grid"/><text x="627" y="220">10 min</text>
+      <line x1="768" y1="196" x2="768" y2="204" class="grid"/><text x="768" y="220">1 h</text>
+      <line x1="910" y1="196" x2="910" y2="204" class="grid"/><text x="910" y="220">6 h</text>
+      <line x1="1020" y1="196" x2="1020" y2="204" class="grid"/><text x="1020" y="220">24 h</text>
+    </g>
+    <text x="575" y="242" text-anchor="middle" class="lbl">time since the victim's credit (log scale)</text>
+    <!-- streaming row -->
+    <text x="12" y="74" class="t">Streaming</text><text x="12" y="90" class="s">production target</text>
+    <line x1="120" y1="80" x2="207" y2="80" class="goodl"/>
+    <circle cx="120" cy="80" r="6" class="money"/>
+    <circle cx="207" cy="80" r="7" class="good"/>
+    <text x="220" y="76" class="t">scored in ~2 s → debit-freeze</text>
+    <line x1="207" y1="80" x2="1020" y2="80" stroke-dasharray="2 5" class="goodl" opacity=".55"/>
+    <text x="1020" y="68" text-anchor="end" class="s">funds held for review</text>
+    <!-- batch row -->
+    <text x="12" y="146" class="t">Nightly batch</text><text x="12" y="162" class="s">this prototype</text>
+    <line x1="120" y1="152" x2="977" y2="152" class="ar"/>
+    <circle cx="120" cy="152" r="6" class="money"/>
+    <rect x="554" y="146" width="251" height="12" rx="6" class="money" opacity=".55"/>
+    <text x="680" y="140" text-anchor="middle" class="s">mule forwards 4–95 min</text>
+    <rect x="768" y="164" width="87" height="10" rx="5" class="bad" opacity=".6"/>
+    <text x="812" y="188" text-anchor="middle" class="s">ATM / crypto 1–3 h</text>
+    <circle cx="977" cy="152" r="7" class="bad"/>
+    <text x="1035" y="176" text-anchor="end" class="t">scored next morning:</text><text x="1035" y="191" text-anchor="end" class="t">account empty</text>
+  </svg>
+  </div>
+  <figcaption><b>Why streaming matters.</b> Same fraud, two detection schedules. The red band is the window in which the money disappears. Only a decision inside the first minute keeps it in the bank. The forwarding times are the ones built into this project's simulated data.</figcaption>
+</figure>
+
+<section class="col">
+<h2>As built: the portfolio system</h2>
+<p>Everything runs on one machine with free tools. Each box below is a real module in the repository. The batch path is complete; the streaming path is the production step.</p>
+</section>
+<figure>
+  <div class="scroll">
+  <svg viewBox="0 0 950 420" role="img" aria-label="As-built architecture. A simulator writes parquet into a DuckDB bronze, silver, gold pipeline. Graph features and a LightGBM model feed case building, which writes a read model. FastAPI serves it to the analyst console. FastAPI runs the AI investigator, which loops with an LLM and queries the gold tables read-only.">
+    <defs>
+      <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head"/></marker>
+      <marker id="a1v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head act"/></marker>
+    </defs>
+    <!-- row 1: batch path -->
+    <rect x="20" y="30" width="150" height="64" rx="10" class="bx ext"/><text x="95" y="57" text-anchor="middle" class="t">Simulator</text><text x="95" y="75" text-anchor="middle" class="m">simulate.py</text>
+    <rect x="210" y="30" width="150" height="64" rx="10" class="bx cold"/><text x="285" y="52" text-anchor="middle" class="t">DuckDB warehouse</text><text x="285" y="69" text-anchor="middle" class="s">bronze → silver → gold</text><text x="285" y="84" text-anchor="middle" class="m">11 DQ checks</text>
+    <rect x="400" y="30" width="150" height="64" rx="10" class="bx cold"/><text x="475" y="57" text-anchor="middle" class="t">Graph features</text><text x="475" y="75" text-anchor="middle" class="m">NetworkX</text>
+    <rect x="590" y="30" width="150" height="64" rx="10" class="bx cold"/><text x="665" y="52" text-anchor="middle" class="t">Mule-risk model</text><text x="665" y="69" text-anchor="middle" class="s">weak labels, ring CV</text><text x="665" y="84" text-anchor="middle" class="m">LightGBM</text>
+    <rect x="780" y="30" width="150" height="64" rx="10" class="bx cold"/><text x="855" y="52" text-anchor="middle" class="t">Case builder</text><text x="855" y="69" text-anchor="middle" class="s">detect · expand · split</text><text x="855" y="84" text-anchor="middle" class="m">Louvain</text>
+    <path d="M170 62H208" class="ar" marker-end="url(#a1)"/><text x="189" y="54" text-anchor="middle" class="lbl">parquet</text>
+    <path d="M360 62H398" class="ar" marker-end="url(#a1)"/><text x="379" y="54" text-anchor="middle" class="lbl">edges</text>
+    <path d="M550 62H588" class="ar" marker-end="url(#a1)"/><text x="569" y="54" text-anchor="middle" class="lbl">features</text>
+    <path d="M740 62H778" class="ar" marker-end="url(#a1)"/><text x="759" y="54" text-anchor="middle" class="lbl">scores</text>
+    <!-- row 2: serving -->
+    <rect x="20" y="170" width="150" height="64" rx="10" class="bx ext"/><text x="95" y="197" text-anchor="middle" class="t">Analyst</text><text x="95" y="215" text-anchor="middle" class="s">FIU investigator</text>
+    <rect x="210" y="170" width="150" height="64" rx="10" class="bx act"/><text x="285" y="192" text-anchor="middle" class="t">Analyst console</text><text x="285" y="209" text-anchor="middle" class="s">cases, replay, model lab</text><text x="285" y="224" text-anchor="middle" class="m">D3 · single page</text>
+    <rect x="590" y="170" width="150" height="64" rx="10" class="bx act"/><text x="665" y="192" text-anchor="middle" class="t">FastAPI</text><text x="665" y="209" text-anchor="middle" class="s">REST + SSE, host checks</text><text x="665" y="224" text-anchor="middle" class="m">/docs</text>
+    <rect x="780" y="170" width="150" height="64" rx="10" class="bx"/><text x="855" y="192" text-anchor="middle" class="t">Read model</text><text x="855" y="209" text-anchor="middle" class="s">case + account JSON</text><text x="855" y="224" text-anchor="middle" class="m">SQLite audit log</text>
+    <path d="M855 94V168" class="ar" marker-end="url(#a1)"/><text x="863" y="135" class="lbl">writes</text>
+    <path d="M780 202H742" class="ar" marker-end="url(#a1)"/><text x="761" y="194" text-anchor="middle" class="lbl">reads</text>
+    <path d="M590 202H362" class="ar act" marker-end="url(#a1v)" marker-start="url(#a1v)"/><text x="476" y="194" text-anchor="middle" class="lbl">REST, SSE, actions</text>
+    <path d="M170 202H208" class="ar" marker-end="url(#a1)"/><text x="189" y="194" text-anchor="middle" class="lbl">uses</text>
+    <!-- row 3: investigator -->
+    <rect x="590" y="310" width="150" height="64" rx="10" class="bx act"/><text x="665" y="332" text-anchor="middle" class="t">AI investigator</text><text x="665" y="349" text-anchor="middle" class="s">4 tools, SQL guard</text><text x="665" y="364" text-anchor="middle" class="m">STR draft</text>
+    <rect x="780" y="310" width="150" height="64" rx="10" class="bx ext"/><text x="855" y="337" text-anchor="middle" class="t">LLM API</text><text x="855" y="355" text-anchor="middle" class="m">Groq free tier</text>
+    <path d="M665 234V308" class="ar act" marker-end="url(#a1v)"/><text x="673" y="275" class="lbl">runs agent, streams steps</text>
+    <path d="M742 342H778" class="ar" marker-end="url(#a1)" marker-start="url(#a1)"/><text x="760" y="334" text-anchor="middle" class="lbl">tool loop</text>
+    <path d="M665 374V396H190V84H208" class="ar act" stroke-dasharray="5 4" marker-end="url(#a1v)"/>
+    <text x="420" y="390" text-anchor="middle" class="lbl">read-only SELECT on gold tables only (no bronze, no ground truth, no files)</text>
+  </svg>
+  </div>
+  <div class="legend"><span><i style="--c:var(--blue)"></i>batch data path</span><span><i style="--c:var(--violet)"></i>serving and investigation</span><span><i style="--c:var(--ink-3)"></i>other flows</span></div>
+  <figcaption><b>As built.</b> One build command runs the top row end to end in about 90 seconds. The dashed violet path is the only way the LLM touches data: a guarded, read-only query against the feature tables, logged and streamed to the analyst.</figcaption>
+</figure>
+
+<section class="col">
+<h2>Production design on AWS</h2>
+<p>The same components split into three paths that run at different speeds. The real-time path decides on each credit in seconds. The batch path builds the lake, the graph and the model every few hours. The case path is where people and the AI investigator work in minutes. Everything runs in the Mumbai region because RBI requires payment data to be stored in India.</p>
+</section>
+<figure>
+  <div class="scroll">
+  <svg viewBox="0 0 1140 600" role="img" aria-label="Production architecture on AWS in three lanes. Real-time: the UPI switch publishes credits to Kinesis, Managed Flink computes streaming features into ElastiCache, a Fargate scoring service decides allow, step-up or debit-freeze in about two seconds. Batch: Firehose lands events in an S3 Iceberg lake with complaints and KYC; dbt on Athena builds features, Neptune Analytics builds graph features and ring expansion, SageMaker trains and deploys the model to the scorer. Case: alerts and ring expansions flow to a case API on Fargate used by analysts; the Bedrock investigator queries Athena read-only through Lake Formation masking; cases and audit live in Aurora and STRs go to FIU-IND.">
+    <defs>
+      <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head"/></marker>
+      <marker id="ph" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head hot"/></marker>
+      <marker id="pc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head cold"/></marker>
+      <marker id="pv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="head act"/></marker>
+    </defs>
+    <!-- lane labels -->
+    <text x="20" y="44" class="lane">REAL-TIME PATH · SECONDS</text>
+    <text x="20" y="224" class="lane">BATCH AND LEARNING PATH · HOURS</text>
+    <text x="20" y="404" class="lane">CASE PATH · MINUTES</text>
+    <line x1="20" y1="196" x2="1120" y2="196" class="grid" stroke-dasharray="2 4"/>
+    <line x1="20" y1="376" x2="1120" y2="376" class="grid" stroke-dasharray="2 4"/>
+
+    <!-- lane A -->
+    <rect x="20" y="62" width="150" height="70" rx="10" class="bx ext"/><text x="95" y="90" text-anchor="middle" class="t">UPI switch / CBS</text><text x="95" y="108" text-anchor="middle" class="s">credit events</text>
+    <rect x="210" y="62" width="150" height="70" rx="10" class="bx hot"/><text x="285" y="90" text-anchor="middle" class="t">Kinesis Data Streams</text><text x="285" y="108" text-anchor="middle" class="m">partition: account</text>
+    <rect x="400" y="62" width="150" height="70" rx="10" class="bx hot"/><text x="475" y="86" text-anchor="middle" class="t">Managed Flink</text><text x="475" y="103" text-anchor="middle" class="s">velocity, dwell, fan-in</text><text x="475" y="119" text-anchor="middle" class="m">keyed state</text>
+    <rect x="590" y="62" width="150" height="70" rx="10" class="bx hot"/><text x="665" y="86" text-anchor="middle" class="t">ElastiCache Redis</text><text x="665" y="103" text-anchor="middle" class="s">online features</text><text x="665" y="119" text-anchor="middle" class="m">&lt;5 ms reads</text>
+    <rect x="780" y="62" width="150" height="70" rx="10" class="bx hot"/><text x="855" y="86" text-anchor="middle" class="t">Scoring service</text><text x="855" y="103" text-anchor="middle" class="s">LightGBM on Fargate</text><text x="855" y="119" text-anchor="middle" class="m">p99 &lt;100 ms</text>
+    <rect x="970" y="62" width="150" height="70" rx="10" class="bx hot"/><text x="1045" y="86" text-anchor="middle" class="t">Decision</text><text x="1045" y="103" text-anchor="middle" class="s">allow · step-up</text><text x="1045" y="119" text-anchor="middle" class="s">debit-freeze</text>
+    <path d="M170 97H208" class="ar hot" marker-end="url(#ph)"/><text x="189" y="89" text-anchor="middle" class="lbl">publish</text>
+    <path d="M360 97H398" class="ar hot" marker-end="url(#ph)"/><text x="379" y="89" text-anchor="middle" class="lbl">events</text>
+    <path d="M550 97H588" class="ar hot" marker-end="url(#ph)"/><text x="569" y="89" text-anchor="middle" class="lbl">upsert</text>
+    <path d="M740 97H778" class="ar hot" marker-end="url(#ph)"/><text x="759" y="89" text-anchor="middle" class="lbl">lookup</text>
+    <path d="M930 97H968" class="ar hot" marker-end="url(#ph)"/><text x="949" y="89" text-anchor="middle" class="lbl">score</text>
+    <path d="M1045 62V48H95V60" class="ar hot" stroke-dasharray="5 4" marker-end="url(#ph)"/><text x="570" y="42" text-anchor="middle" class="lbl">hold or release instruction back to the switch, ~2 s after the credit</text>
+
+    <!-- lane B -->
+    <rect x="20" y="242" width="150" height="70" rx="10" class="bx ext"/><text x="95" y="264" text-anchor="middle" class="t">Complaints, KYC</text><text x="95" y="281" text-anchor="middle" class="s">NCRP feed, device SDK</text><text x="95" y="297" text-anchor="middle" class="m">daily files / API</text>
+    <rect x="210" y="242" width="150" height="70" rx="10" class="bx cold"/><text x="285" y="264" text-anchor="middle" class="t">S3 lake (Iceberg)</text><text x="285" y="281" text-anchor="middle" class="s">bronze · silver · gold</text><text x="285" y="297" text-anchor="middle" class="m">KMS, versioned</text>
+    <rect x="400" y="242" width="150" height="70" rx="10" class="bx cold"/><text x="475" y="264" text-anchor="middle" class="t">dbt on Athena</text><text x="475" y="281" text-anchor="middle" class="s">SQL features, DQ tests</text><text x="475" y="297" text-anchor="middle" class="m">Step Functions</text>
+    <rect x="590" y="242" width="150" height="70" rx="10" class="bx cold"/><text x="665" y="264" text-anchor="middle" class="t">Neptune Analytics</text><text x="665" y="281" text-anchor="middle" class="s">graph features,</text><text x="665" y="297" text-anchor="middle" class="s">ring expansion</text>
+    <rect x="780" y="242" width="150" height="70" rx="10" class="bx cold"/><text x="855" y="264" text-anchor="middle" class="t">SageMaker</text><text x="855" y="281" text-anchor="middle" class="s">train, registry,</text><text x="855" y="297" text-anchor="middle" class="s">shadow deploy</text>
+    <rect x="970" y="242" width="150" height="70" rx="10" class="bx"/><text x="1045" y="264" text-anchor="middle" class="t">EventBridge</text><text x="1045" y="281" text-anchor="middle" class="s">alert events</text><text x="1045" y="297" text-anchor="middle" class="m">idempotent ids</text>
+    <path d="M285 132V240" class="ar cold" marker-end="url(#pc)"/><text x="293" y="190" class="lbl">Firehose</text>
+    <path d="M170 277H208" class="ar cold" marker-end="url(#pc)"/><text x="189" y="269" text-anchor="middle" class="lbl">land</text>
+    <path d="M360 277H398" class="ar cold" marker-end="url(#pc)"/><text x="379" y="269" text-anchor="middle" class="lbl">tables</text>
+    <path d="M550 277H588" class="ar cold" marker-end="url(#pc)"/><text x="569" y="269" text-anchor="middle" class="lbl">edges</text>
+    <path d="M740 277H778" class="ar cold" marker-end="url(#pc)"/><text x="759" y="269" text-anchor="middle" class="lbl">features</text>
+    <path d="M855 242V134" class="ar cold" marker-end="url(#pc)"/><text x="863" y="170" class="lbl">deploys model</text>
+    <path d="M1045 132V240" class="ar" marker-end="url(#p)"/><text x="1053" y="190" class="lbl">holds, freezes</text>
+    <path d="M665 242V214H500V134" class="ar cold" stroke-dasharray="5 4" marker-end="url(#pc)"/><text x="582" y="208" text-anchor="middle" class="lbl">graph features to Flink</text>
+
+    <!-- bus from batch to case lane -->
+    <path d="M1045 312V392H285V418" class="ar" marker-end="url(#p)"/>
+    <path d="M665 312V392" class="ar"/>
+    <text x="860" y="386" text-anchor="middle" class="lbl">alerts and expanded rings → case queue</text>
+
+    <!-- lane C -->
+    <rect x="20" y="420" width="150" height="70" rx="10" class="bx ext"/><text x="95" y="448" text-anchor="middle" class="t">Analysts</text><text x="95" y="466" text-anchor="middle" class="s">SSO via Cognito</text>
+    <rect x="210" y="420" width="150" height="70" rx="10" class="bx act"/><text x="285" y="442" text-anchor="middle" class="t">Case API + console</text><text x="285" y="459" text-anchor="middle" class="s">FastAPI on Fargate</text><text x="285" y="475" text-anchor="middle" class="m">behind ALB + WAF</text>
+    <rect x="400" y="420" width="150" height="70" rx="10" class="bx act"/><text x="475" y="442" text-anchor="middle" class="t">AI investigator</text><text x="475" y="459" text-anchor="middle" class="s">Bedrock, Guardrails</text><text x="475" y="475" text-anchor="middle" class="m">ap-south-1</text>
+    <rect x="590" y="420" width="150" height="70" rx="10" class="bx act"/><text x="665" y="442" text-anchor="middle" class="t">Aurora Postgres</text><text x="665" y="459" text-anchor="middle" class="s">cases, decisions,</text><text x="665" y="475" text-anchor="middle" class="s">audit trail</text>
+    <rect x="780" y="420" width="150" height="70" rx="10" class="bx ext"/><text x="855" y="442" text-anchor="middle" class="t">FIU-IND, I4C</text><text x="855" y="459" text-anchor="middle" class="s">STR filing,</text><text x="855" y="475" text-anchor="middle" class="s">mule reporting</text>
+    <path d="M170 455H208" class="ar act" marker-end="url(#pv)"/><text x="189" y="447" text-anchor="middle" class="lbl">review</text>
+    <path d="M360 455H398" class="ar act" marker-end="url(#pv)"/><text x="379" y="447" text-anchor="middle" class="lbl">run</text>
+    <path d="M475 420V314" class="ar act" stroke-dasharray="5 4" marker-end="url(#pv)"/><text x="483" y="345" class="lbl">read-only SQL,</text><text x="483" y="358" class="lbl">PII masked</text>
+    <path d="M285 490V514H665V492" class="ar act" marker-end="url(#pv)"/><text x="475" y="508" text-anchor="middle" class="lbl">writes cases and audit</text>
+    <path d="M665 514H855V492" class="ar act" marker-end="url(#pv)"/><text x="760" y="508" text-anchor="middle" class="lbl">approved STRs</text>
+    <path d="M705 420V338H855V314" class="ar cold" stroke-dasharray="5 4" marker-end="url(#pc)"/>
+    <text x="863" y="334" class="lbl">analyst labels → retraining</text>
+
+    <!-- cross-cutting -->
+    <rect x="20" y="536" width="1100" height="54" rx="10" class="bx ext"/>
+    <text x="570" y="558" text-anchor="middle" class="s">Everywhere: ap-south-1 (Mumbai) only · KMS encryption · private subnets and PrivateLink · least-privilege IAM per service</text>
+    <text x="570" y="576" text-anchor="middle" class="s">Lake Formation column masking · CloudTrail and Macie · CloudWatch, OpenTelemetry, model drift monitoring</text>
+  </svg>
+  </div>
+  <div class="legend"><span><i style="--c:var(--gold)"></i>real-time path</span><span><i style="--c:var(--blue)"></i>batch and learning path</span><span><i style="--c:var(--violet)"></i>case path</span><span>dashed = feedback or restricted access</span></div>
+  <figcaption><b>Production.</b> The gold path must finish in about two seconds, so it reads only precomputed features from Redis. Anything slow, like graph features and model training, runs in the blue path and is pushed into the gold path. Analyst decisions in Aurora flow back as labels, which closes the loop the prototype leaves open.</figcaption>
+</figure>
+
+<section class="col">
+<h2>From prototype to production, component by component</h2>
+</section>
+<div class="tw"><table>
+  <thead><tr><th>Concern</th><th>As built</th><th>Production</th><th>Why the change</th></tr></thead>
+  <tbody>
+    <tr><td>Ingestion</td><td>Simulator writes parquet</td><td>Kinesis Data Streams, partitioned by account; Firehose to S3</td><td>Per-account ordering for features; replayable history</td></tr>
+    <tr><td>Storage</td><td>DuckDB file</td><td>S3 + Apache Iceberg, Glue catalog</td><td>Schema evolution, time travel for audits, cheap at scale</td></tr>
+    <tr><td>Batch features</td><td>DuckDB SQL (ASOF, range windows)</td><td>dbt on Athena, same SQL; Step Functions schedule</td><td>SQL ports almost unchanged; tests run in CI</td></tr>
+    <tr><td>Streaming features</td><td>Not built</td><td>Managed Flink keyed state into ElastiCache</td><td>Dwell time and velocity must be fresh at decision time</td></tr>
+    <tr><td>Graph</td><td>NetworkX in memory</td><td>Neptune Analytics (PageRank, communities, k-hop)</td><td>Hundreds of millions of edges; ring expansion as a query</td></tr>
+    <tr><td>Model</td><td>LightGBM, GroupKFold by ring</td><td>SageMaker pipeline, registry, shadow then canary</td><td>A new model is compared on live traffic before it can freeze accounts</td></tr>
+    <tr><td>Scoring</td><td>Offline, whole population</td><td>Fargate service per credit, p99 &lt;100 ms</td><td>Decision inside the forwarding window</td></tr>
+    <tr><td>Cases</td><td>JSON read model + SQLite</td><td>Aurora Postgres, row-level audit</td><td>Concurrent analysts, regulatory record keeping</td></tr>
+    <tr><td>Investigator</td><td>Groq, guarded DuckDB SQL</td><td>Bedrock in ap-south-1 with Guardrails; Athena role behind Lake Formation masking</td><td>Data residency; masking enforced by AWS, not by app code</td></tr>
+    <tr><td>Access</td><td>Localhost, host and origin checks</td><td>Cognito SSO, ALB + WAF, per-role IAM</td><td>Real users, least privilege per service</td></tr>
+    <tr><td>Quality</td><td>11 checks per run</td><td>dbt tests plus Deequ, failing runs block the deploy</td><td>Bad data must never reach the freeze decision</td></tr>
+  </tbody>
+</table></div>
+
+<section class="col">
+<h2>Decisions and trade-offs</h2>
+</section>
+<div class="dec">
+  <div><h3>Two paths, one feature definition</h3><p>Fast and slow paths compute the same features in different engines, which risks training/serving skew. Each feature is defined once and tested on both engines against the same replayed day.</p></div>
+  <div><h3>Debit-freeze, not full freeze</h3><p>A false positive on a student's account is a real cost. The fast path only blocks outgoing money and asks for step-up authentication. A full freeze needs an analyst.</p></div>
+  <div><h3>Weak labels, closed loop</h3><p>Complaints name only about 40% of mules, and only the first hop. The model trains on them, graph expansion finds the rest, and analyst decisions become the next training labels.</p></div>
+  <div><h3>Group splits by ring</h3><p>Accounts in one ring look alike. Random splits leak and inflate scores, so validation holds out whole rings.</p></div>
+  <div><h3>The LLM drafts, a person decides</h3><p>The investigator can only read masked gold tables, every tool call is logged, and its STR is a draft that an analyst approves before filing.</p></div>
+  <div><h3>Idempotent alerts</h3><p>Streams retry. Every alert carries a deterministic id (account and credit id), so a replay never opens a duplicate case or applies a second hold.</p></div>
+</div>
+
+<section class="col">
+<h2>Deploying the demo on the AWS free plan</h2>
+<p>The full production design is not free. A credible portfolio slice is: the S3 lake with the gold tables as parquet, Athena for the investigator's read-only queries, a Lambda that rebuilds and scores nightly, DynamoDB for case decisions, and the console as a static page. Lambda and DynamoDB stay within the always-free limits at this size; S3 and Athena cost a few rupees from the free-plan credits. Set an AWS Budgets alert before deploying.</p>
+<p class="mono" style="color:var(--ink-3)">S3 (parquet) → Athena (read-only role) ← Lambda investigator · EventBridge nightly → Lambda build · DynamoDB cases</p>
+</section>
+</div>

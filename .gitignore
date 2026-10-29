@@ -1,0 +1,13 @@
+.env
+.venv/
+data/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+deploy/.build/
+deploy/terraform/.terraform/
+deploy/terraform/*.tfstate*
+deploy/terraform/.terraform.lock.hcl
+state/
+loadtest_results.json

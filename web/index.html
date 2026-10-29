@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RingBreaker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: fixed left rail (nav) + scrolling workspace; case view = flow canvas left, evidence column right.
+   Direction: night-shift financial-intelligence console. Ink-blue neutrals, money moves in warm gold. */
+:root{
+  --bg:#0a0d13; --surface:#11161f; --surface-2:#171e2a; --surface-3:#1e2735; --line:#222c3c; --line-2:#2d3a4f;
+  --ink:#e6ebf3; --ink-2:#a5b0c4; --ink-3:#6c7891; --accent:#8fb4ff; --accent-ink:#0a0d13;
+  --gold:#ffcf6b; --gold-dim:rgba(255,207,107,.16);
+  --r-collector:#1fb889; --r-layer:#9085e9; --r-aggregator:#d55181; --r-cashout:#3987e5; --r-victim:#58657c; --r-sink:#c3cad6;
+  --crit:#e45858; --serious:#ec835a; --warn:#fab219; --good:#21b34a;
+  --display:"Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --sans:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --rail:220px; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--mono);font-size:.92em}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-2)}.faint{color:var(--ink-3)}
+h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:-.01em;margin:0;text-wrap:balance}
+h1{font-size:26px}h2{font-size:18px}h3{font-size:14px;font-family:var(--sans);font-weight:600;letter-spacing:0}
+.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3);font-weight:600}
+
+/* shell */
+.app{display:grid;grid-template-columns:var(--rail) 1fr;min-height:100%}
+.rail{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;
+  padding:18px 12px calc(18px + env(safe-area-inset-bottom,0px)) max(12px, env(safe-area-inset-left,0px))}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 8px 18px}
+.brand svg{flex:none}
+.brand b{font-family:var(--display);font-size:19px;letter-spacing:-.02em}
+.brand small{display:block;font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin-top:-2px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--ink-2);font-weight:500;white-space:nowrap}
+.nav a svg{width:17px;height:17px;flex:none;opacity:.85}
+.nav a:hover{background:var(--surface-2);color:var(--ink)}
+.nav a.on{background:var(--surface-3);color:var(--ink);box-shadow:inset 2px 0 0 var(--gold)}
+.nav .count{margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--ink-3)}
+.rail-foot{margin-top:auto;padding:12px 8px 0;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3);display:grid;gap:6px}
+.env{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);color:var(--ink-2)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px rgba(33,179,74,.15)}
+.dot.off{background:var(--warn);box-shadow:0 0 0 3px rgba(250,178,25,.15)}
+
+.main{min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:12px;
+  padding:10px max(20px, env(safe-area-inset-right,0px)) 10px 24px;border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+.crumbs{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink-2);font-size:13px;white-space:nowrap;overflow:hidden}
+.crumbs b{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.search{margin-left:auto;position:relative}
+.search input{width:250px;max-width:42vw;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px 7px 30px}
+.search svg{position:absolute;left:9px;top:9px;width:14px;height:14px;color:var(--ink-3)}
+.badge-synth{font:500 11px var(--mono);color:var(--gold);border:1px solid rgba(255,207,107,.35);background:var(--gold-dim);padding:3px 8px;border-radius:999px;white-space:nowrap}
+.view{padding:22px max(20px, env(safe-area-inset-right,0px)) 60px 24px;display:none;min-width:0}
+.view.on{display:block}
+.vhead{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 20px;margin-bottom:18px}
+.vhead p{margin:4px 0 0;color:var(--ink-2);max-width:760px}
+
+/* building blocks */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;min-width:0}
+.panel>.ph{display:flex;align-items:center;gap:10px;padding:14px 16px 0}
+.panel>.pb{padding:12px 16px 16px}
+.grid{display:grid;gap:14px}
+.g-kpi{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.g-2{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
+.g-2e{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:1100px){.g-2,.g-2e,.g-3{grid-template-columns:1fr}}
+.kpi{padding:14px 16px;display:grid;gap:2px;position:relative;overflow:hidden}
+.kpi .k{font-size:12px;color:var(--ink-2)}
+.kpi .v{font-family:var(--display);font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:12px;color:var(--ink-3)}
+.kpi.gold .v{color:var(--gold)}
+.kpi .spark{position:absolute;right:10px;bottom:10px;opacity:.7}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--line-2);white-space:nowrap}
+.sev{--c:var(--ink-3)}
+.sev::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--c)}
+.sev.Critical{--c:var(--crit);color:#ff9b9b;border-color:rgba(228,88,88,.45);background:rgba(228,88,88,.10)}
+.sev.High{--c:var(--serious);color:#ffb796;border-color:rgba(236,131,90,.4);background:rgba(236,131,90,.08)}
+.sev.Medium{--c:var(--warn);color:#ffd27a;border-color:rgba(250,178,25,.35)}
+.sev.Low{--c:var(--ink-3);color:var(--ink-2)}
+.status{color:var(--ink-2)}
+.status.Frozen,.status.STR\ filed{color:#8fe3a8;border-color:rgba(33,179,74,.4)}
+.status.Investigating,.status.Escalated{color:var(--accent);border-color:rgba(143,180,255,.4)}
+.status.False\ positive{color:var(--ink-3)}
+.role{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.role i{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line-2);background:var(--surface-2);border-radius:8px;padding:7px 12px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--surface-3)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:#ffb4b4;border-color:rgba(228,88,88,.45)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn svg{width:15px;height:15px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line-2);background:transparent;border-radius:999px;padding:4px 11px;font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.chip.on{background:var(--surface-3);color:var(--ink);border-color:var(--ink-3)}
+select.sel,input.inp{background:var(--surface-2);border:1px solid var(--line-2);border-radius:8px;padding:6px 10px}
+.scroll{overflow-x:auto}
+table.t{border-collapse:collapse;width:100%;font-size:13px}
+.t th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:default}
+.t th.sort{cursor:pointer}.t th.sort:hover{color:var(--ink)}
+.t td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.t tr.click{cursor:pointer}.t tr.click:hover td{background:var(--surface-2)}
+.t td.r,.t th.r{text-align:right}
+.sevbar{width:3px;padding:0!important;background:var(--c)}
+.bar{height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden;min-width:60px}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--c,var(--accent))}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:50%;background:var(--c)}
+.legend i.ln{width:14px;height:2px;border-radius:2px}
+.legend i.sq{border-radius:2px}
+.tip{position:fixed;z-index:60;pointer-events:none;background:var(--surface-3);border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.45);max-width:280px;opacity:0;transition:opacity .08s}
+.tip b{font-variant-numeric:tabular-nums}
+.tip .h{color:var(--ink-2);margin-bottom:3px}
+svg text{fill:var(--ink-3);font-size:11px;font-family:var(--sans)}
+.empty{padding:28px;text-align:center;color:var(--ink-3)}
+
+/* overview */
+.netwrap{position:relative;height:420px}
+.netwrap canvas{position:absolute;inset:0;width:100%;height:100%}
+.queue{display:grid}
+.qrow{display:grid;grid-template-columns:3px 1fr auto;gap:12px;align-items:center;padding:10px 4px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px}
+.qrow:hover{background:var(--surface-2)}
+.qrow .s{align-self:stretch;border-radius:2px;background:var(--c)}
+.qrow .t1{font-weight:600}.qrow .t2{font-size:12px;color:var(--ink-3)}
+.src-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;gap:2px;margin:8px 0}
+.src-bar i{display:block;height:100%}
+
+/* case view */
+.case-head{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;margin-bottom:6px}
+.case-head h1{font-family:var(--mono);font-size:22px;font-weight:500;letter-spacing:0}
+.case-actions{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:14px 0}
+.facts div{background:var(--surface);padding:11px 14px}
+.facts .k{font-size:11.5px;color:var(--ink-3)}.facts .v{font-family:var(--display);font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.facts .v.gold{color:var(--gold)}
+.case-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;align-items:start}
+@media (max-width:1180px){.case-grid{grid-template-columns:1fr}}
+.flow{position:relative;height:560px;border-radius:0 0 12px 12px;overflow:hidden;
+  background:radial-gradient(1200px 500px at 40% 0%,rgba(143,180,255,.06),transparent 60%),var(--surface)}
+.flow svg,.flow canvas{position:absolute;inset:0;width:100%;height:100%}
+.flow canvas{pointer-events:none}
+.lanes{position:absolute;inset:10px 0 auto;display:flex;pointer-events:none}
+.lanes span{position:absolute;transform:translateX(-50%);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap}
+.player{display:flex;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.player input[type=range]{flex:1;min-width:160px;accent-color:var(--gold)}
+.clock{font-family:var(--mono);font-size:12.5px;color:var(--gold);min-width:150px}
+.counters{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
+.counters b{font-family:var(--mono);color:var(--ink);font-weight:500}
+.mlist{display:grid}
+.mrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:9px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.mrow:hover{background:var(--surface-2)}
+.mrow .id{font-family:var(--mono);font-size:12.5px}
+.mrow .why{grid-column:1/-1;font-size:12px;color:var(--ink-3)}
+.score{font-family:var(--mono);font-size:12px;padding:1px 6px;border-radius:4px;background:var(--surface-3)}
+.score.hi{color:#ffb0b0;background:rgba(228,88,88,.14)}
+.score.md{color:#ffd27a;background:rgba(250,178,25,.12)}
+/* investigator */
+.inv-log{font-family:var(--mono);font-size:12px;background:#070a0f;border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:280px;overflow:auto;display:grid;gap:8px}
+.inv-log .st{display:grid;grid-template-columns:auto 1fr;gap:2px 10px}
+.inv-log .n{color:var(--ink-3)}
+.inv-log .tool{color:var(--gold)}
+.inv-log .why{color:var(--ink-2);font-family:var(--sans)}
+.inv-log .res{grid-column:2;color:var(--ink-3);white-space:pre-wrap;word-break:break-word;max-height:4.5em;overflow:hidden}
+.inv-log .blocked{color:#ff9b9b}
+.report{display:grid;gap:14px}
+.report .headline{font-family:var(--display);font-size:20px;font-weight:700;line-height:1.25}
+.report ul{margin:0;padding-left:18px;display:grid;gap:6px}
+.evidence{display:grid;gap:8px}
+.evidence div{border-left:2px solid var(--gold);padding:2px 0 2px 10px}
+.evidence b{display:block;font-weight:600}
+.evidence span{color:var(--ink-2);font-size:13px}
+.str{background:var(--surface-2);border:1px solid var(--line-2);border-radius:10px;padding:14px;font-size:13px;display:grid;gap:8px}
+.str dl{display:grid;grid-template-columns:150px 1fr;gap:4px 12px;margin:0}
+.str dt{color:var(--ink-3)}.str dd{margin:0}
+.engine{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.typing::after{content:"▍";color:var(--gold);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.timeline{display:grid;gap:8px;font-size:12.5px}
+.timeline div{display:grid;grid-template-columns:auto 1fr;gap:10px}
+/* account */
+.gauge{display:flex;align-items:center;gap:16px}
+.reasons{display:grid;gap:8px}
+.reason{display:grid;grid-template-columns:minmax(130px,1fr) 2fr auto;gap:10px;align-items:center;font-size:13px}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:1px;background:var(--line);border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.fgrid div{background:var(--surface);padding:9px 12px}
+.fgrid .k{font-size:11.5px;color:var(--ink-3)}.fgrid .v{font-family:var(--mono);font-size:13.5px}
+/* model lab */
+.budget{display:grid;gap:10px}
+.budget input[type=range]{width:100%;accent-color:var(--accent)}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.vs .card{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px}
+.vs .card h3{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.vs dl{display:grid;grid-template-columns:1fr auto;gap:5px 10px;margin:0;font-size:13px}
+.vs dt{color:var(--ink-2)}.vs dd{margin:0;font-family:var(--mono);text-align:right}
+.note{font-size:12.5px;color:var(--ink-2);border-left:2px solid var(--line-2);padding-left:10px}
+/* pipeline */
+.dag{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;position:relative}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:6px;position:relative;align-content:start}
+.stage .kind{font:500 10.5px var(--mono);text-transform:uppercase;letter-spacing:.08em}
+.stage .kind.bronze{color:#d9a066}.stage .kind.silver{color:#c3cad6}.stage .kind.gold{color:var(--gold)}.stage .kind.serve{color:var(--accent)}
+.stage .rows{font-size:12px;color:var(--ink-2);display:grid;gap:2px}
+.stage .rows b{font-family:var(--mono);color:var(--ink);font-weight:500}
+.checks{display:grid;gap:6px}
+.check{display:flex;gap:10px;align-items:center;font-size:13px}
+.check i{font-style:normal;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:4px}
+.check i.pass{color:#8fe3a8;background:rgba(33,179,74,.12)}
+.check i.warn{color:#ffd27a;background:rgba(250,178,25,.12)}
+pre.code{margin:0;font:12px/1.6 var(--mono);background:#070a0f;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;color:#c9d3e6}
+pre.code .kw{color:#8fb4ff}pre.code .fn{color:var(--gold)}pre.code .cm{color:var(--ink-3)}
+.toast{position:fixed;right:max(20px,env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));z-index:70;background:var(--surface-3);border:1px solid var(--line-2);border-radius:10px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.4);opacity:0;transform:translateY(8px);transition:.2s}
+.toast.on{opacity:1;transform:none}
+dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line-2);border-radius:12px;padding:18px;width:min(460px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+dialog textarea{width:100%;background:var(--surface-2);border:1px solid var(--line-2);border-radius:8px;padding:8px;margin:10px 0}
+
+@media (max-width:860px){
+  .app{grid-template-columns:1fr}
+  .rail{position:sticky;top:env(safe-area-inset-top,0px);height:auto;z-index:25;flex-direction:row;align-items:center;gap:6px;padding:8px max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px));overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .brand{padding:0 6px 0 0}.brand small{display:none}
+  .nav{flex-direction:row}.nav a{padding:6px 9px}.nav .count,.rail-foot{display:none}
+  .topbar{top:calc(env(safe-area-inset-top,0px) + 52px);padding-left:max(16px,env(safe-area-inset-left,0px))}
+  .view{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .search input{width:150px}.badge-synth{display:none}
+  .flow{height:440px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11" fill="none" stroke="#ffcf6b" stroke-width="2.4" stroke-dasharray="52 17" transform="rotate(-38 16 16)"/><circle cx="16" cy="16" r="3.2" fill="#8fb4ff"/><path d="M24 7 L29 2" stroke="#ffcf6b" stroke-width="2.4" stroke-linecap="round"/></svg>
+      <div><b>RingBreaker</b><small>Mule network intelligence</small></div>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#overview" data-v="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 8.5l3 6.5M16 8l-3 7M8.4 6.7l7.2-.5"/></svg>Command center</a>
+      <a href="#cases" data-v="cases"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M8 5V3h8v2M3 11h18"/></svg>Cases<span class="count" id="navCases"></span></a>
+      <a href="#alerts" data-v="alerts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0"/></svg>Flagged accounts<span class="count" id="navAlerts"></span></a>
+      <a href="#model" data-v="model"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V4M4 20h16M7 15l4-5 3 3 5-7"/></svg>Model lab</a>
+      <a href="#pipeline" data-v="pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="6" height="5" rx="1"/><rect x="15" y="4" width="6" height="5" rx="1"/><rect x="9" y="15" width="6" height="5" rx="1"/><path d="M6 9v3h12V9M12 12v3"/></svg>Data pipeline</a>
+    </nav>
+    <div class="rail-foot">
+      <span class="env"><span class="dot" id="envDot"></span><span id="envText">Live API</span></span>
+      <span id="llmText">Investigator: rule-based</span>
+      <span>Data window 1 Aug – 30 Sep 2026</span>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="q" type="search" placeholder="Case or account id (e.g. A014956)" aria-label="Search case or account id" list="qlist"><datalist id="qlist"></datalist></div>
+      <span class="badge-synth">SYNTHETIC DATA</span>
+    </header>
+
+    <section class="view" id="v-overview"></section>
+    <section class="view" id="v-cases"></section>
+    <section class="view" id="v-case"></section>
+    <section class="view" id="v-account"></section>
+    <section class="view" id="v-alerts"></section>
+    <section class="view" id="v-model"></section>
+    <section class="view" id="v-pipeline"></section>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+<dialog id="dlg"><form method="dialog" id="dlgForm"><h2 id="dlgTitle">Confirm</h2><p class="muted" id="dlgText"></p>
+  <label for="dlgNote" class="eyebrow">Analyst note</label><textarea id="dlgNote" rows="3" placeholder="Why are you taking this action?"></textarea>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" value="cancel" type="submit">Cancel</button><button class="btn primary" value="ok" type="submit" id="dlgOk">Confirm</button></div></form></dialog>
+
+<script id="rb-data" type="application/json">/*__DATA__*/</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+"use strict";
+/* ============================== data layer ============================== */
+let EMBED = null;
+try { const t = document.getElementById("rb-data").textContent.trim(); if (t.startsWith("{")) EMBED = JSON.parse(t); } catch (e) { EMBED = null; }
+const LIVE = !EMBED;
+// When served under a path prefix (e.g. https://host/live/), call the API under the same prefix.
+const BASE = location.protocol.startsWith("http") ? location.pathname.replace(/\/[^/]*$/, "") : "";
+const cache = new Map();
+async function api(path) {
+  if (cache.has(path)) return cache.get(path);
+  let v;
+  if (EMBED) {
+    v = embedGet(path);
+  } else {
+    const r = await fetch(BASE + path); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); v = await r.json();
+  }
+  if (!/\/cases\/|\/overview|\/model/.test(path)) cache.set(path, v);
+  return v;
+}
+const demoState = { status: {}, history: {}, inv: {} };
+function embedGet(path) {
+  const p = path.replace(/^\/api\//, "");
+  if (p === "overview") { const o = structuredClone(EMBED.overview); o.status_counts = {}; for (const c of EMBED.cases) { const s = demoState.status[c.case_id] || "Open"; o.status_counts[s] = (o.status_counts[s] || 0) + 1; } return o; }
+  if (p === "cases") return EMBED.cases.map(c => ({ ...c, status: demoState.status[c.case_id] || "Open" }));
+  if (p === "alerts") return EMBED.alerts;
+  if (p === "model") return { ...EMBED.model, feedback: Object.values(demoState.status).reduce((a, s) => (a[s] = (a[s] || 0) + 1, a), {}) };
+  if (p === "pipeline") return EMBED.pipeline;
+  if (p === "network") return EMBED.network;
+  if (p === "config") return { llm: null, live: false };
+  let m = p.match(/^cases\/(CASE-\d+)$/);
+  if (m) { const c = EMBED.caseDetails[m[1]]; if (!c) throw new Error("case not found");
+    return { ...c, status: demoState.status[m[1]] || "Open", history: demoState.history[m[1]] || [], investigation: demoState.inv[m[1]] || null }; }
+  m = p.match(/^accounts\/(A\d+)$/);
+  if (m) { const a = EMBED.accounts[m[1]]; if (!a) throw new Error("account not in the alerting population"); return a; }
+  throw new Error("not found");
+}
+async function post(path, body) {
+  if (EMBED) {
+    const m = path.match(/cases\/(CASE-\d+)\/actions/);
+    const map = { start: "Investigating", escalate: "Escalated", freeze: "Frozen", str: "STR filed", false_positive: "False positive", close: "Closed", reopen: "Open" };
+    const s = map[body.action]; demoState.status[m[1]] = s;
+    (demoState.history[m[1]] ||= []).push({ action: body.action, status: s, note: body.note, actor: "you (demo)", at: new Date().toISOString() });
+    return { status: s };
+  }
+  const r = await fetch(BASE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error("request failed"); return r.json();
+}
+
+/* ============================== helpers ============================== */
+const $ = s => document.querySelector(s);
+function h(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v; else if (k === "style") n.style.cssText = v; else if (k === "html") n.innerHTML = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return n;
+}
+const svgNS = "http://www.w3.org/2000/svg";
+function inr(x, short = true) {
+  if (x == null || isNaN(x)) return "–";
+  const a = Math.abs(x), s = x < 0 ? "-" : "";
+  if (short && a >= 1e7) return `${s}₹${(a / 1e7).toFixed(a >= 1e9 ? 0 : 2)} Cr`;
+  if (short && a >= 1e5) return `${s}₹${(a / 1e5).toFixed(a >= 1e6 ? 1 : 2)} L`;
+  return `${s}₹${Math.round(a).toLocaleString("en-IN")}`;
+}
+const num = x => x == null ? "–" : Number(x).toLocaleString("en-IN");
+const pct = (x, d = 0) => x == null ? "–" : `${(x * 100).toFixed(d)}%`;
+const D = s => s instanceof Date ? s : typeof s === "number" ? new Date(s) : new Date(String(s).replace(" ", "T"));
+const fmtDate = s => D(s).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+const fmtDT = s => D(s).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+const ROLE_C = { Collector: "var(--r-collector)", Layer: "var(--r-layer)", Aggregator: "var(--r-aggregator)", "Cash-out": "var(--r-cashout)", victim: "var(--r-victim)", sink: "var(--r-sink)" };
+const SEV_C = { Critical: "var(--crit)", High: "var(--serious)", Medium: "var(--warn)", Low: "var(--ink-3)" };
+const cssv = v => getComputedStyle(document.documentElement).getPropertyValue(v.replace(/var\((.*)\)/, "$1")).trim();
+const sevPill = s => h("span", { class: `pill sev ${s}` }, s);
+const statusPill = s => h("span", { class: `pill status ${s}` }, s);
+const roleTag = r => h("span", { class: "role", style: `--c:${ROLE_C[r] || "var(--ink-3)"}` }, h("i"), r);
+const scoreTag = s => h("span", { class: `score ${s >= .8 ? "hi" : s >= .4 ? "md" : ""}` }, s.toFixed(2));
+const FEATURE_TEXT = {
+  in_cnt: ["Inbound credits", v => num(v)], in_amt: ["Total inbound", v => inr(v)], uniq_in: ["Unique senders", v => num(v)],
+  out_cnt: ["Outbound debits", v => num(v)], out_amt: ["Total outbound", v => inr(v)], uniq_out: ["Unique recipients", v => num(v)],
+  pass_through: ["Pass-through ratio", v => v.toFixed(2)], fast_fwd_ratio: ["Forwarded within 1 h", v => pct(v)],
+  median_dwell_min: ["Median dwell", v => v >= 99999 ? "never forwarded" : v < 120 ? `${Math.round(v)} min` : `${(v / 60).toFixed(1)} h`],
+  cash_out_ratio: ["ATM cash-out share", v => pct(v)], crypto_ratio: ["Crypto OTC share", v => pct(v)], max_in_1h: ["Credits in busiest hour", v => num(v)],
+  max_gap_days: ["Longest dormancy", v => `${v.toFixed(0)} days`], account_age_days: ["Account age", v => v > 730 ? `${(v / 365).toFixed(1)} yrs` : `${v} days`],
+  max_device_share: ["Accounts on same phone", v => num(v)], n_devices: ["Devices used", v => num(v)], new_device_in_window: ["New device this period", v => v ? "yes" : "no"],
+  pagerank: ["Network centrality", v => v.toFixed(2)], in_from_fast_fwd: ["Funds from fast-forwarders", v => pct(v)], in_large_cycle: ["In a large-value cycle", v => v ? "yes" : "no"],
+};
+let tipEl;
+function tip(e, nodes) {
+  tipEl ||= $("#tip");
+  if (!nodes) { tipEl.style.opacity = 0; return; }
+  tipEl.replaceChildren(...[].concat(nodes));
+  const x = Math.min(e.clientX + 14, innerWidth - tipEl.offsetWidth - 10), y = Math.min(e.clientY + 14, innerHeight - tipEl.offsetHeight - 10);
+  tipEl.style.left = x + "px"; tipEl.style.top = y + "px"; tipEl.style.opacity = 1;
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 2600); }
+function panel(title, body, extra) { return h("div", { class: "panel" }, h("div", { class: "ph" }, h("h3", {}, title), extra ? h("div", { style: "margin-left:auto" }, extra) : null), h("div", { class: "pb" }, body)); }
+function crumbs(...parts) { $("#crumbs").replaceChildren(...parts.flatMap((p, i) => i ? [h("span", { class: "faint" }, "/"), p] : [p])); }
+
+/* ----- tiny chart kit (SVG, to scale, theme tokens) ----- */
+function svgEl(tag, attrs = {}) { const n = document.createElementNS(svgNS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; }
+function areaChart(host, { dates, series, height = 220, yFmt = inr, markers = [] }) {
+  host.replaceChildren();
+  const W = Math.max(host.clientWidth || 600, 300), H = height, m = { l: 54, r: 10, t: 10, b: 24 };
+  const x = d3.scaleLinear().domain([0, dates.length - 1]).range([m.l, W - m.r]);
+  const ymax = d3.max(series.flatMap(s => s.values)) || 1;
+  const y = d3.scaleLinear().domain([0, ymax]).nice(4).range([H - m.b, m.t]);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, role: "img" });
+  y.ticks(4).forEach(t => { svg.append(svgEl("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: cssv("var(--line)") }));
+    const tx = svgEl("text", { x: m.l - 8, y: y(t) + 4, "text-anchor": "end" }); tx.textContent = yFmt(t); svg.append(tx); });
+  const step = Math.ceil(dates.length / 7);
+  dates.forEach((d, i) => { if (i % step) return; const tx = svgEl("text", { x: x(i), y: H - 6, "text-anchor": "middle" }); tx.textContent = fmtDate(d); svg.append(tx); });
+  for (const mk of markers) { const i = dates.indexOf(mk.date); if (i < 0) continue;
+    svg.append(svgEl("line", { x1: x(i), x2: x(i), y1: m.t, y2: H - m.b, stroke: cssv("var(--line-2)"), "stroke-dasharray": "3 3" })); }
+  for (const s of series) {
+    const col = cssv(s.color);
+    if (s.fill) { const g = svgEl("linearGradient", { id: "g" + s.key, x1: 0, x2: 0, y1: 0, y2: 1 });
+      g.append(svgEl("stop", { offset: "0", "stop-color": col, "stop-opacity": .35 }), svgEl("stop", { offset: "1", "stop-color": col, "stop-opacity": 0 }));
+      const defs = svgEl("defs"); defs.append(g); svg.append(defs);
+      svg.append(svgEl("path", { d: d3.area().x((_, i) => x(i)).y0(y(0)).y1(v => y(v)).curve(d3.curveMonotoneX)(s.values), fill: `url(#g${s.key})` })); }
+    svg.append(svgEl("path", { d: d3.line().x((_, i) => x(i)).y(v => y(v)).curve(d3.curveMonotoneX)(s.values), fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round" }));
+  }
+  const cross = svgEl("line", { y1: m.t, y2: H - m.b, stroke: cssv("var(--ink-3)"), opacity: 0 });
+  const dots = series.map(s => { const c = svgEl("circle", { r: 4, fill: cssv(s.color), stroke: cssv("var(--surface)"), "stroke-width": 2, opacity: 0 }); svg.append(c); return c; });
+  svg.append(cross);
+  const hit = svgEl("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" });
+  svg.append(hit); host.append(svg);
+  hit.addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect(); const i = Math.max(0, Math.min(dates.length - 1, Math.round(x.invert((e.clientX - r.left) / r.width * W))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("opacity", 1);
+    series.forEach((s, k) => { dots[k].setAttribute("cx", x(i)); dots[k].setAttribute("cy", y(s.values[i])); dots[k].setAttribute("opacity", 1); });
+    const mk = markers.find(q => q.date === dates[i]);
+    tip(e, [h("div", { class: "h" }, fmtDate(dates[i]) + (mk ? ` · ${mk.label}` : "")), ...series.map(s => h("div", { style: "display:flex;gap:8px;align-items:center" },
+      h("i", { style: `width:12px;height:2px;background:${s.color};display:inline-block` }), h("b", {}, s.fmt ? s.fmt(s.values[i]) : yFmt(s.values[i])), h("span", { class: "muted" }, s.name)))]);
+  });
+  hit.addEventListener("pointerleave", e => { cross.setAttribute("opacity", 0); dots.forEach(d => d.setAttribute("opacity", 0)); tip(e, null); });
+}
+function hbars(rows, { fmt = inr, color = "var(--accent)", max } = {}) {
+  const mx = max || d3.max(rows, r => r.value) || 1;
+  return h("div", { style: "display:grid;gap:9px" }, rows.map(r => h("div", { style: "display:grid;grid-template-columns:minmax(110px,150px) 1fr auto;gap:10px;align-items:center;font-size:13px" },
+    h("span", { class: "muted" }, r.label), h("div", { class: "bar", style: `--c:${r.color || color};height:8px` }, h("i", { style: `width:${Math.max(r.value / mx * 100, 1)}%` })),
+    h("span", { class: "num mono", style: "font-size:12px" }, fmt(r.value)))));
+}
+function lineXY(host, { series, xLabel, yLabel, height = 260, xDomain = [0, 1], yDomain = [0, 1], xFmt = v => v, yFmt = v => v, marker }) {
+  host.replaceChildren();
+  const W = Math.max(host.clientWidth || 500, 280), H = height, m = { l: 46, r: 12, t: 10, b: 34 };
+  const x = d3.scaleLinear().domain(xDomain).range([m.l, W - m.r]), y = d3.scaleLinear().domain(yDomain).range([H - m.b, m.t]);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H });
+  y.ticks(5).forEach(t => { svg.append(svgEl("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: cssv("var(--line)") }));
+    const tx = svgEl("text", { x: m.l - 7, y: y(t) + 4, "text-anchor": "end" }); tx.textContent = yFmt(t); svg.append(tx); });
+  x.ticks(6).forEach(t => { const tx = svgEl("text", { x: x(t), y: H - 16, "text-anchor": "middle" }); tx.textContent = xFmt(t); svg.append(tx); });
+  const xl = svgEl("text", { x: (m.l + W - m.r) / 2, y: H - 2, "text-anchor": "middle" }); xl.textContent = xLabel; svg.append(xl);
+  for (const s of series) svg.append(svgEl("path", { d: d3.line().x(p => x(p.x)).y(p => y(p.y))(s.points), fill: "none", stroke: cssv(s.color), "stroke-width": 2 }));
+  if (marker) for (const mk of marker) { svg.append(svgEl("circle", { cx: x(mk.x), cy: y(mk.y), r: 5, fill: cssv(mk.color), stroke: cssv("var(--surface)"), "stroke-width": 2 })); }
+  host.append(svg);
+}
+
+/* ============================== router ============================== */
+const views = ["overview", "cases", "case", "account", "alerts", "model", "pipeline"];
+let current = "";
+async function route() {
+  const hsh = (location.hash || "#overview").slice(1);
+  let v = hsh, arg = null;
+  if (hsh.startsWith("case-")) { v = "case"; arg = hsh.slice(5); }
+  else if (hsh.startsWith("account-")) { v = "account"; arg = hsh.slice(8); }
+  if (!views.includes(v)) v = "overview";
+  document.querySelectorAll(".view").forEach(s => s.classList.toggle("on", s.id === "v-" + v));
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.dataset.v === (v === "case" ? "cases" : v === "account" ? "alerts" : v)));
+  stopReplay(); tip({}, null);
+  current = hsh;
+  const host = $("#v-" + v);
+  try { await RENDER[v](host, arg); } catch (e) { host.replaceChildren(h("div", { class: "empty" }, "Could not load this view: " + e.message)); }
+  if (current === hsh) window.scrollTo({ top: 0 });
+}
+addEventListener("hashchange", route);
+$("#q").addEventListener("change", e => {
+  const v = e.target.value.trim().toUpperCase(); e.target.value = "";
+  if (/^CASE-\d+$/.test(v)) location.hash = "case-" + v; else if (/^A\d+$/.test(v)) location.hash = "account-" + v; else toast("Type a case id (CASE-…) or an account id (A…)");
+});
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (!current.startsWith("case-")) route(); }, 250); });
+
+/* ============================== overview ============================== */
+const RENDER = {};
+RENDER.overview = async host => {
+  crumbs(h("b", {}, "Command center"));
+  const [o, cases, net] = await Promise.all([api("/api/overview"), api("/api/cases"), api("/api/network")]);
+  const k = o.kpis;
+  const kpi = (label, value, sub, cls = "") => h("div", { class: `panel kpi ${cls}` }, h("div", { class: "k" }, label), h("div", { class: "v" }, value), h("div", { class: "s" }, sub));
+  const critical = cases.filter(c => c.severity === "Critical" && !["Frozen", "STR filed", "Closed", "False positive"].includes(c.status)).length;
+  host.replaceChildren(
+    h("div", { class: "vhead" }, h("div", {}, h("div", { class: "eyebrow" }, "Financial intelligence unit · night shift"),
+      h("h1", {}, "Mule networks under watch"),
+      h("p", {}, `${num(k.transactions)} UPI and IMPS transactions across ${num(k.accounts)} accounts were scanned between ${fmtDate(o.window[0])} and ${fmtDate(o.window[1])}. ${cases.length} suspected money-mule rings are open as cases.`))),
+    h("div", { class: "grid g-kpi" },
+      kpi("Victim money traced", inr(k.victim_inflow), `${num(k.victims)} victims paid into mule accounts`, "gold"),
+      kpi("Still recoverable", inr(k.in_flight), "Balance not yet cashed out"),
+      kpi("Open rings", num(cases.length), `${critical} critical, awaiting action`),
+      kpi("Mule accounts flagged", num(k.flagged), `${num(k.unreported_flagged)} never named in any complaint`),
+      kpi("Cashed out", inr(k.cash_out), "ATM withdrawals and crypto OTC")),
+    h("div", { class: "grid g-2", style: "margin-top:14px" },
+      panel("Network map", h("div", {}, h("div", { class: "netwrap", id: "netmap" }),
+        h("div", { class: "legend", style: "margin-top:8px" }, ["Collector", "Layer", "Aggregator", "Cash-out"].map(r => h("span", {}, h("i", { style: `--c:${ROLE_C[r]}` }), r)),
+          h("span", { class: "faint" }, "Each cluster is one ring. Click a cluster to open its case."))),
+        h("span", { class: "faint", style: "font-size:12px" }, `${net.nodes.length} accounts · ${net.links.length} transfer links`)),
+      panel("Priority queue", h("div", { class: "queue" }, cases.slice(0, 7).map(c => h("div", { class: "qrow", style: `--c:${SEV_C[c.severity]}`, onclick: () => location.hash = "case-" + c.case_id },
+        h("span", { class: "s" }), h("div", {}, h("div", { class: "t1" }, h("span", { class: "mono" }, c.case_id), " ", h("span", { class: "muted", style: "font-weight:400" }, c.typology)),
+          h("div", { class: "t2" }, `${c.n_members} accounts · ${c.n_victims} victims · ${c.banks.length} banks`)),
+        h("div", { style: "text-align:right" }, h("div", { class: "num", style: "font-weight:600" }, inr(c.victim_inflow || c.internal_volume)), statusPill(c.status))))),
+        h("a", { href: "#cases", class: "btn" }, "All cases"))),
+    h("div", { class: "grid g-2", style: "margin-top:14px" },
+      panel("Victim money into mule networks, per day", h("div", {}, h("div", { class: "legend" },
+        h("span", {}, h("i", { class: "ln", style: "--c:var(--gold)" }), "Victim credits into mule accounts"), h("span", {}, h("i", { class: "ln", style: "--c:var(--r-cashout)" }), "Cashed out")),
+        h("div", { id: "ovDaily", style: "margin-top:6px" }), h("div", { class: "eyebrow", style: "margin:10px 0 2px" }, "Complaints filed on NCRP per day"), h("div", { id: "ovComp" }))),
+      panel("How the rings were found", h("div", { style: "display:grid;gap:16px" }, sourceBlock(o, k), h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:8px" }, "Victim money by typology"),
+        hbars(o.typology.filter(t => t.victim_inflow > 0).map(t => ({ label: t.typology, value: t.victim_inflow, color: "var(--gold)" })).sort((a, b) => b.value - a.value)),
+        o.typology.some(t => !t.victim_inflow) ? h("div", { class: "faint", style: "font-size:12px;margin-top:8px" }, `${o.typology.filter(t => !t.victim_inflow).map(t => `${t.typology} (${t.cases} cases)`).join(", ")} moves money in loops with no direct victims.`) : null))))
+  );
+  areaChart($("#ovDaily"), { dates: o.daily.dates, series: [{ key: "v", name: "victim credits", color: "var(--gold)", values: o.daily.victim_inflow, fill: true }, { key: "c", name: "cashed out", color: "var(--r-cashout)", values: o.daily.cash_out }] });
+  areaChart($("#ovComp"), { dates: o.daily.dates, height: 90, yFmt: v => num(v), series: [{ key: "k", name: "complaints", color: "var(--ink-3)", values: o.daily.complaints, fmt: v => num(v), fill: true }] });
+  networkMap($("#netmap"), net, cases);
+};
+function sourceBlock(o, k) {
+  const src = o.sources || {};
+  const parts = [["model", "Risk model", "var(--accent)"], ["expansion", "Following the money", "var(--gold)"], ["cycle", "Cycle detection", "var(--r-layer)"]];
+  const tot = parts.reduce((a, [key]) => a + (src[key] || 0), 0) || 1;
+  return h("div", {}, h("p", { class: "muted", style: "margin:0 0 6px;font-size:13px" },
+    "Victims only name the first account they paid. Following the money from flagged accounts finds the layers behind it."),
+    h("div", { class: "src-bar" }, parts.map(([key, , c]) => h("i", { style: `width:${(src[key] || 0) / tot * 100}%;background:${c}`, title: `${src[key] || 0}` }))),
+    h("div", { class: "legend" }, parts.map(([key, label, c]) => h("span", {}, h("i", { class: "sq", style: `--c:${c}` }), `${label} `, h("b", { class: "num", style: "color:var(--ink)" }, num(src[key] || 0))))));
+}
+
+/* force-directed network map on canvas */
+function networkMap(host, net, cases) {
+  const W = host.clientWidth, H = host.clientHeight, dpr = devicePixelRatio || 1;
+  const cv = h("canvas"); cv.width = W * dpr; cv.height = H * dpr; host.replaceChildren(cv);
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  const byCase = d3.group(net.nodes, n => n.case_id);
+  const caseIds = [...byCase.keys()];
+  const cols = Math.ceil(Math.sqrt(caseIds.length * W / H * 1.1));
+  const rows = Math.ceil(caseIds.length / cols);
+  const centers = {};
+  caseIds.forEach((c, i) => { centers[c] = { x: (i % cols + .5) / cols * W, y: (Math.floor(i / cols) + .5) / rows * H }; });
+  const vmaxN = d3.max(net.nodes, n => n.value) || 1;
+  const rN = d3.scaleSqrt().domain([0, vmaxN]).range([3, Math.min(13, W / cols / 7)]);
+  const nodes = net.nodes.map(n => ({ ...n, r: rN(n.value), x: centers[n.case_id].x + (Math.random() - .5) * 30, y: centers[n.case_id].y + (Math.random() - .5) * 30 }));
+  const id = new Map(nodes.map(n => [n.id, n]));
+  const links = net.links.filter(l => id.has(l.source) && id.has(l.target)).map(l => ({ ...l, source: id.get(l.source), target: id.get(l.target) }));
+  const sim = d3.forceSimulation(nodes).force("x", d3.forceX(n => centers[n.case_id].x).strength(.18)).force("y", d3.forceY(n => centers[n.case_id].y).strength(.18))
+    .force("link", d3.forceLink(links).distance(14).strength(.4)).force("collide", d3.forceCollide(n => n.r + 1.5)).stop();
+  for (let i = 0; i < 220; i++) sim.tick();
+  const extent = {}; for (const n of nodes) extent[n.case_id] = Math.max(extent[n.case_id] || 0, n.y - centers[n.case_id].y + n.r);
+  const sevOf = Object.fromEntries(cases.map(c => [c.case_id, c]));
+  const colors = Object.fromEntries(Object.entries(ROLE_C).map(([k, v]) => [k, cssv(v)]));
+  const parts = links.map(l => ({ l, t: Math.random() }));
+  let hover = null, raf;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    for (const c of caseIds) { const cc = centers[c], s = sevOf[c];
+      if (s && s.severity === "Critical") { const g = ctx.createRadialGradient(cc.x, cc.y, 0, cc.x, cc.y, 46); g.addColorStop(0, "rgba(228,88,88,.13)"); g.addColorStop(1, "rgba(228,88,88,0)"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cc.x, cc.y, 46, 0, 7); ctx.fill(); } }
+    ctx.lineWidth = 1;
+    for (const l of links) { ctx.strokeStyle = hover && hover === l.case_id ? "rgba(255,207,107,.55)" : "rgba(165,176,196,.16)"; ctx.beginPath(); ctx.moveTo(l.source.x, l.source.y); ctx.lineTo(l.target.x, l.target.y); ctx.stroke(); }
+    ctx.fillStyle = "#ffcf6b";
+    for (const p of parts) { const { source: a, target: b } = p.l; const x = a.x + (b.x - a.x) * p.t, y = a.y + (b.y - a.y) * p.t; ctx.globalAlpha = .85; ctx.beginPath(); ctx.arc(x, y, 1.4, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    for (const n of nodes) { ctx.fillStyle = colors[n.role] || "#888"; ctx.globalAlpha = hover && hover !== n.case_id ? .35 : 1; ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1; ctx.font = "10px IBM Plex Mono, monospace"; ctx.textAlign = "center";
+    for (const c of caseIds) { const s = sevOf[c]; ctx.fillStyle = hover === c ? "#e6ebf3" : "rgba(165,176,196,.55)";
+      ctx.fillText(c.slice(-4) + " · " + inr(s.victim_inflow || s.internal_volume), centers[c].x, centers[c].y + extent[c] + 13); }
+  }
+  function loop() { for (const p of parts) p.t = (p.t + .006) % 1; draw(); raf = requestAnimationFrame(loop); }
+  if (reduce) draw(); else loop();
+  const nearest = e => { const r = cv.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top; let best = null, bd = 1e9;
+    for (const c of caseIds) { const d = Math.hypot(centers[c].x - x, centers[c].y - y); if (d < bd) { bd = d; best = c; } } return bd < 60 ? best : null; };
+  cv.addEventListener("pointermove", e => { hover = nearest(e); cv.style.cursor = hover ? "pointer" : "default"; if (reduce) draw();
+    if (!hover) return tip(e, null); const c = sevOf[hover];
+    tip(e, [h("div", { class: "h" }, h("span", { class: "mono" }, c.case_id), " · ", c.severity), h("div", {}, c.typology), h("div", {}, h("b", {}, inr(c.victim_inflow || c.internal_volume)), " moved by ", c.n_members, " accounts")]); });
+  cv.addEventListener("pointerleave", e => { hover = null; tip(e, null); if (reduce) draw(); });
+  cv.addEventListener("click", e => { const c = nearest(e); if (c) location.hash = "case-" + c; });
+  const obs = new MutationObserver(() => { if (!host.isConnected || !$("#v-overview").classList.contains("on")) { cancelAnimationFrame(raf); obs.disconnect(); } });
+  obs.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["class"] });
+}
+
+/* ============================== cases list ============================== */
+const caseFilter = { sev: "All", typ: "All", status: "All", sort: "risk" };
+RENDER.cases = async host => {
+  crumbs(h("a", { href: "#overview" }, "Command center"), h("b", {}, "Cases"));
+  const cases = await api("/api/cases");
+  const typs = ["All", ...new Set(cases.map(c => c.typology))];
+  const statuses = ["All", ...new Set(cases.map(c => c.status))];
+  const tbl = h("table", { class: "t" });
+  const draw = () => {
+    let rows = cases.filter(c => (caseFilter.sev === "All" || c.severity === caseFilter.sev) && (caseFilter.typ === "All" || c.typology === caseFilter.typ) && (caseFilter.status === "All" || c.status === caseFilter.status));
+    const key = { risk: c => -c.risk, money: c => -(c.victim_inflow || c.internal_volume), recover: c => -c.in_flight, members: c => -c.n_members, first: c => c.first_seen }[caseFilter.sort];
+    rows = rows.sort((a, b) => key(a) < key(b) ? -1 : 1);
+    const th = (label, s, cls = "") => h("th", { class: `${s ? "sort" : ""} ${cls}`, onclick: s ? () => { caseFilter.sort = s; draw(); } : null }, label + (caseFilter.sort === s ? " ↓" : ""));
+    tbl.replaceChildren(h("thead", {}, h("tr", {}, h("th", {}), th("Case"), th("Severity", "risk"), th("Typology"), th("Accounts", "members", "r"), th("Victims", "", "r"),
+      th("Victim money", "money", "r"), th("Recoverable", "recover", "r"), th("Complaints", "", "r"), th("Active", "first"), th("Status"))),
+      h("tbody", {}, rows.length ? rows.map(c => h("tr", { class: "click", onclick: () => location.hash = "case-" + c.case_id },
+        h("td", { class: "sevbar", style: `--c:${SEV_C[c.severity]}` }), h("td", {}, h("span", { class: "mono" }, c.case_id), h("div", { class: "faint", style: "font-size:12px" }, c.banks.join(" · "))),
+        h("td", {}, sevPill(c.severity), " ", h("span", { class: "mono faint", style: "font-size:12px" }, c.risk.toFixed(0))), h("td", {}, c.typology),
+        h("td", { class: "r num" }, c.n_members, h("div", { class: "faint", style: "font-size:11.5px" }, `${c.unreported_members} unreported`)), h("td", { class: "r num" }, c.n_victims),
+        h("td", { class: "r num" }, inr(c.victim_inflow || c.internal_volume)), h("td", { class: "r num", style: "color:var(--gold)" }, inr(c.in_flight)), h("td", { class: "r num" }, c.complaints),
+        h("td", { class: "num", style: "white-space:nowrap" }, `${fmtDate(c.first_seen)} – ${fmtDate(c.last_seen)}`), h("td", {}, statusPill(c.status)))) :
+        h("tr", {}, h("td", { colspan: 11, class: "empty" }, "No cases match these filters. Clear a filter to see more.")))); };
+  const chips = (vals, key) => h("div", { class: "chips" }, vals.map(v => h("button", { class: "chip" + (caseFilter[key] === v ? " on" : ""), onclick: ev => { caseFilter[key] = v; ev.target.parentNode.querySelectorAll(".chip").forEach(b => b.classList.toggle("on", b.textContent === v)); draw(); } }, v)));
+  const sevCount = s => cases.filter(c => c.severity === s).length;
+  host.replaceChildren(
+    h("div", { class: "vhead" }, h("div", {}, h("h1", {}, "Cases"), h("p", {}, `${cases.length} suspected mule rings. Each case is one connected network of accounts that received victim money and moved it on.`))),
+    h("div", { class: "panel" }, h("div", { class: "pb", style: "display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center" },
+      h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:6px" }, "Severity"), chips(["All", "Critical", "High", "Medium", "Low"], "sev")),
+      h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:6px" }, "Typology"), chips(typs, "typ")),
+      h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:6px" }, "Status"), chips(statuses, "status")),
+      h("div", { style: "margin-left:auto;display:flex;gap:16px" }, ["Critical", "High", "Medium"].map(s => h("div", {}, h("div", { class: "faint", style: "font-size:12px" }, s), h("div", { style: "font:700 22px var(--display)" }, sevCount(s)))))),
+      h("div", { class: "scroll" }, tbl)));
+  draw();
+};
+
+/* ============================== case view ============================== */
+let replay = null;
+function stopReplay() { if (replay) { cancelAnimationFrame(replay.raf); replay.playing = false; replay = null; } }
+RENDER.case = async (host, id) => {
+  const c = await api(`/api/cases/${id}`);
+  crumbs(h("a", { href: "#cases" }, "Cases"), h("b", { class: "mono" }, c.case_id));
+  const fact = (k, v, cls = "") => h("div", {}, h("div", { class: "k" }, k), h("div", { class: `v ${cls}` }, v));
+  const actBtn = (label, action, cls = "", icon = "") => h("button", { class: `btn ${cls}`, onclick: () => doAction(c, action, label) }, label);
+  const isLoop = c.typology === "Circular layering";
+  host.replaceChildren(
+    h("div", { class: "case-head" }, h("h1", {}, c.case_id), sevPill(c.severity), statusPill(c.status), h("span", { class: "muted" }, c.typology),
+      h("div", { class: "case-actions" }, actBtn("Start investigation", "start"), actBtn("Freeze accounts", "freeze", "danger"), actBtn("File STR", "str", "primary"), actBtn("Not fraud", "false_positive"))),
+    h("div", { class: "muted", style: "font-size:13px" }, `Active ${fmtDT(c.first_seen)} – ${fmtDT(c.last_seen)} · ${c.banks.length} banks (${c.banks.join(", ")}) · ${c.cities.length} cities`),
+    h("div", { class: "facts" },
+      isLoop ? fact("Layered in a loop", inr(c.internal_volume), "gold") : fact("Victim money in", inr(c.victim_inflow), "gold"),
+      fact("Victims", num(c.n_victims)), fact("Cashed out", inr(c.cash_out)), fact("Recoverable", inr(c.in_flight)),
+      fact("Accounts", `${c.n_members}`), fact("Never reported", `${c.unreported_members} of ${c.n_members}`), fact("Complaints", num(c.complaints)), fact("Risk score", c.risk.toFixed(0))),
+    h("div", { class: "case-grid" },
+      h("div", { style: "display:grid;gap:14px;min-width:0" },
+        h("div", { class: "panel" }, h("div", { class: "ph" }, h("h3", {}, "Money flow"), h("div", { class: "legend", style: "margin-left:auto" },
+          ["victim", "Collector", "Layer", "Aggregator", "Cash-out", "sink"].map(r => h("span", {}, h("i", { style: `--c:${ROLE_C[r]}` }), r === "victim" ? "Victim" : r === "sink" ? "ATM / crypto" : r)))),
+          h("div", { class: "flow", id: "flow" }), h("div", { class: "player" },
+            h("button", { class: "btn", id: "play" }, "▶ Replay"), h("input", { type: "range", id: "scrub", min: 0, max: 1000, value: 1000, "aria-label": "Replay position" }),
+            h("span", { class: "clock", id: "clock" }, ""), h("div", { class: "counters", id: "counters" }))),
+        panel("Daily activity", h("div", {}, h("div", { class: "legend" }, h("span", {}, h("i", { class: "ln", style: "--c:var(--gold)" }), "Victim credits"), h("span", {}, h("i", { class: "ln", style: "--c:var(--r-cashout)" }), "Cashed out")), h("div", { id: "caseDaily" }))),
+        investigatorPanel(c)),
+      h("div", { style: "display:grid;gap:14px;min-width:0" },
+        panel(`Accounts in this ring (${c.members.length})`, h("div", { class: "mlist" }, c.members.map(m => h("div", { class: "mrow", onclick: () => location.hash = "account-" + m.account_id,
+          onmouseenter: () => highlight(m.account_id), onmouseleave: () => highlight(null) },
+          h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" }, h("span", { class: "id" }, m.account_id), roleTag(m.role), m.complaints ? h("span", { class: "pill", style: "font-size:10.5px;padding:0 6px" }, `${m.complaints} complaints`) : h("span", { class: "pill", style: "font-size:10.5px;padding:0 6px;color:var(--gold);border-color:rgba(255,207,107,.35)" }, "unreported")),
+          scoreTag(m.score), h("div", { class: "why" }, `${m.segment.replace("_", " ")} · ${m.bank} · ${m.kyc} KYC · ${m.flag === "expansion" ? "found by following the money" : m.flag === "cycle" ? "found by cycle detection" : (m.reasons[0] || {}).label || "model"}`))))),
+        panel("Largest victim credits", h("div", { class: "scroll" }, h("table", { class: "t" }, h("tbody", {}, (c.top_victim_credits || []).slice(0, 8).map(t => h("tr", {},
+          h("td", { class: "num", style: "white-space:nowrap" }, fmtDT(t.ts)), h("td", { class: "mono", style: "font-size:12px" }, t.src, " → ", t.dst), h("td", { class: "r num" }, inr(t.amount, false)))))))),
+        panel("Case history", h("div", { class: "timeline" }, (c.history && c.history.length ? c.history : [{ action: "created", status: "Open", note: "Opened by detection run", actor: "system", at: c.last_seen }]).map(x =>
+          h("div", {}, h("span", { class: "faint num", style: "white-space:nowrap" }, fmtDT(x.at)), h("div", {}, h("b", {}, x.status), " · ", h("span", { class: "muted" }, x.actor), x.note ? h("div", { class: "muted" }, x.note) : null))))))));
+  areaChart($("#caseDaily"), { dates: c.daily.dates, height: 160, series: [{ key: "cv", name: "victim credits", color: "var(--gold)", values: c.daily.victim_inflow, fill: true }, { key: "cc", name: "cashed out", color: "var(--r-cashout)", values: c.daily.cash_out }] });
+  flowGraph($("#flow"), c);
+};
+async function doAction(c, action, label) {
+  const dlg = $("#dlg");
+  $("#dlgTitle").textContent = label; $("#dlgOk").textContent = label;
+  $("#dlgText").textContent = { start: "Assigns the case to you and sets it to Investigating.", freeze: `Records a freeze decision for the ${c.n_members} accounts in ${c.case_id}.`,
+    str: "Marks the Suspicious Transaction Report as filed with FIU-IND.", false_positive: "Closes the case as not fraud. This feedback is used to tune the model." }[action];
+  $("#dlgNote").value = "";
+  dlg.showModal();
+  dlg.onclose = async () => { if (dlg.returnValue !== "ok") return;
+    try { const r = await post(`/api/cases/${c.case_id}/actions`, { action, note: $("#dlgNote").value }); toast(`${c.case_id}: ${r.status}${EMBED ? " (demo, not saved)" : ""}`); route(); }
+    catch (e) { toast("Could not save the action: " + e.message); } };
+}
+
+/* ---------- money-flow graph with replay ---------- */
+let highlight = () => {};
+function flowGraph(host, c) {
+  const g = c.graph, W = host.clientWidth, H = host.clientHeight;
+  const isLoop = c.typology === "Circular layering";
+  const laneX = { victim: .06, Collector: .33, Layer: .53, Aggregator: .6, "Cash-out": .74, sink: .92 };
+  const nodes = g.nodes.map(n => ({ ...n, lane: n.kind === "member" ? n.role : n.kind }));
+  const vmax = d3.max(nodes, n => n.value) || 1;
+  const rs = d3.scaleSqrt().domain([0, vmax]).range([4, 24]);
+  nodes.forEach(n => { n.r = n.kind === "victim" ? Math.max(3.5, rs(n.value) * .7) : rs(n.value); });
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const links = g.links.filter(l => byId.has(l.source) && byId.has(l.target)).map(l => ({ ...l, s: byId.get(l.source), t: byId.get(l.target) }));
+  if (isLoop) {
+    const mem = nodes.filter(n => n.kind === "member"); const cx = W * .5, cy = H * .5, R = Math.min(W, H) * .32;
+    mem.forEach((n, i) => { n.x = cx + R * Math.cos(i / mem.length * 2 * Math.PI - Math.PI / 2); n.y = cy + R * Math.sin(i / mem.length * 2 * Math.PI - Math.PI / 2); });
+    nodes.filter(n => n.kind !== "member").forEach((n, i) => { n.x = W * .9; n.y = H * (.3 + i * .15); });
+  } else {
+    const sim = d3.forceSimulation(nodes).force("x", d3.forceX(n => W * laneX[n.lane]).strength(1)).force("y", d3.forceY(H / 2).strength(.04))
+      .force("collide", d3.forceCollide(n => n.r + (n.kind === "victim" ? 2 : 6)).iterations(3))
+      .force("link", d3.forceLink(links.map(l => ({ source: l.s, target: l.t }))).strength(.03)).stop();
+    for (let i = 0; i < 320; i++) sim.tick();
+    // stretch each lane vertically to use the full canvas, keeping the order the simulation found
+    const top = 44, bot = H - 22;
+    for (const lane of Object.keys(laneX)) {
+      const ln = nodes.filter(n => n.lane === lane).sort((a, b) => a.y - b.y); if (!ln.length) continue;
+      if (lane === "sink" || ln.length <= 12) { const span = Math.min(bot - top, ln.length * (lane === "sink" ? 64 : 58)); const y0 = (top + bot) / 2 - span / 2;
+        ln.forEach((n, i) => { n.y = ln.length === 1 ? (top + bot) / 2 : y0 + span * i / (ln.length - 1); }); }
+      else { const lo = ln[0].y, hi = ln.at(-1).y || lo + 1; ln.forEach(n => { n.y = top + (n.y - lo) / (hi - lo || 1) * (bot - top); }); }
+    }
+    nodes.forEach(n => { n.x = Math.max(n.r + 8, Math.min(W - n.r - 8, n.x)); });
+  }
+  const svg = d3.select(host).append("svg").attr("viewBox", `0 0 ${W} ${H}`);
+  const lanes = h("div", { class: "lanes" }, isLoop ? h("span", { style: `left:50%` }, "Funds circulate between layering accounts") :
+    Object.entries({ victim: "Victims", Collector: "Collectors", Layer: "Layers", "Cash-out": "Cash-out", sink: "Exit" }).filter(([k]) => nodes.some(n => n.lane === k)).map(([k, v]) => h("span", { style: `left:${laneX[k] * 100}%` }, v)));
+  host.append(lanes);
+  const wmax = d3.max(links, l => l.amount) || 1;
+  const ws = d3.scaleSqrt().domain([0, wmax]).range([.6, 9]);
+  const kindCol = { victim: "rgba(255,207,107,.28)", layer: "rgba(144,133,233,.45)", cashout: "rgba(57,135,229,.42)" };
+  const path = l => { const { s, t } = l; if (isLoop && l.kind === "layer") { const dx = t.x - s.x, dy = t.y - s.y, dr = Math.hypot(dx, dy) * .9; return `M${s.x},${s.y}A${dr},${dr} 0 0,1 ${t.x},${t.y}`; }
+    const mx = (s.x + t.x) / 2; return `M${s.x},${s.y}C${mx},${s.y} ${mx},${t.y} ${t.x},${t.y}`; };
+  const lsel = svg.append("g").selectAll("path").data(links).join("path").attr("d", path).attr("fill", "none")
+    .attr("stroke", l => kindCol[l.kind]).attr("stroke-width", l => ws(l.amount)).attr("stroke-linecap", "round")
+    .on("pointermove", (e, l) => tip(e, [h("div", { class: "h" }, `${l.s.label || l.s.id} → ${l.t.label || l.t.id}`), h("div", {}, h("b", {}, inr(l.amount)), ` in ${l.n} transfer${l.n > 1 ? "s" : ""}`)]))
+    .on("pointerleave", e => tip(e, null));
+  links.forEach((l, i) => { l.el = lsel.nodes()[i]; l.len = l.el.getTotalLength(); });
+  const nsel = svg.append("g").selectAll("g").data(nodes).join("g").attr("transform", n => `translate(${n.x},${n.y})`).style("cursor", n => n.kind === "member" ? "pointer" : "default")
+    .on("click", (e, n) => { if (n.kind === "member") location.hash = "account-" + n.id; })
+    .on("pointermove", (e, n) => tip(e, nodeTip(n, c))).on("pointerleave", e => tip(e, null));
+  nsel.append("circle").attr("class", "halo").attr("r", n => n.r + 6).attr("fill", "none").attr("stroke", cssv("var(--gold)")).attr("stroke-width", 2).attr("opacity", 0);
+  nsel.append("circle").attr("r", n => n.r).attr("fill", n => cssv(ROLE_C[n.kind === "member" ? n.role : n.kind])).attr("fill-opacity", n => n.kind === "victim" ? .75 : 1)
+    .attr("stroke", cssv("var(--surface)")).attr("stroke-width", 2);
+  nsel.filter(n => n.kind === "sink").append("text").attr("x", 0).attr("y", n => n.r + 13).attr("text-anchor", "middle").style("fill", cssv("var(--ink-2)")).style("font-size", "10.5px").text(n => n.id === "ATM" ? "ATM cash" : "Crypto OTC");
+  nsel.filter(n => n.kind === "member").append("text").attr("x", n => n.r + 5).attr("y", 3.5).style("font-family", "var(--mono)").style("font-size", "10px").style("fill", cssv("var(--ink-2)")).style("paint-order", "stroke").style("stroke", cssv("var(--surface)")).style("stroke-width", 3).text(n => n.id);
+  highlight = idh => { nsel.select(".halo").attr("opacity", n => n.id === idh ? 1 : 0); lsel.attr("stroke-opacity", l => !idh || l.s.id === idh || l.t.id === idh ? 1 : .15); };
+
+  // particles on canvas
+  const dpr = devicePixelRatio || 1, cv = h("canvas"); cv.width = W * dpr; cv.height = H * dpr; host.append(cv);
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  const linkOf = new Map(links.map(l => [l.source + "|" + l.target, l]));
+  const evs = g.events.map(e => ({ ...e, t: D(e.ts).getTime(), l: linkOf.get(e.source + "|" + e.target) })).filter(e => e.l);
+  const t0 = evs.length ? evs[0].t : 0, t1 = evs.length ? evs[evs.length - 1].t : 1, DUR = 16000;
+  const amax = d3.max(evs, e => e.amount) || 1;
+  const counters = $("#counters"), clock = $("#clock"), scrub = $("#scrub"), btn = $("#play");
+  const totals = () => ({ victim: 0, layer: 0, cashout: 0 });
+  const showCounters = tot => counters.replaceChildren(
+    h("span", {}, "Victim money ", h("b", {}, inr(tot.victim))), h("span", {}, "Between mules ", h("b", {}, inr(tot.layer))), h("span", {}, "Cashed out ", h("b", {}, inr(tot.cashout))));
+  const sumUpTo = t => { const tot = totals(); for (const e of evs) { if (e.t > t) break; tot[e.kind] += e.amount; } return tot; };
+  showCounters(sumUpTo(t1)); clock.textContent = evs.length ? fmtDT(new Date(t1)) : "";
+  const state = { raf: 0, playing: false, simT: t1, last: 0, particles: [], idx: evs.length };
+  replay = state;
+  function frame(now) {
+    if (!state.playing) return;
+    const dt = Math.min(now - (state.last || now), 64); state.last = now;
+    const prev = state.simT; state.simT = Math.min(t1, state.simT + dt / DUR * (t1 - t0));
+    while (state.idx < evs.length && evs[state.idx].t <= state.simT) { state.particles.push({ e: evs[state.idx], p: 0 }); state.idx++; }
+    ctx.clearRect(0, 0, W, H);
+    const tot = sumUpTo(state.simT);
+    for (const p of state.particles) { p.p += dt / 1100; }
+    state.particles = state.particles.filter(p => { if (p.p >= 1) { pulse(p.e.l.t); return false; } return true; });
+    for (const p of state.particles) { const pt = p.e.l.el.getPointAtLength(p.p * p.e.l.len); const r = 1.8 + 3.5 * Math.sqrt(p.e.amount / amax);
+      ctx.shadowColor = "rgba(255,207,107,.9)"; ctx.shadowBlur = 10; ctx.fillStyle = p.e.kind === "cashout" ? "#9cc6ff" : "#ffcf6b"; ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, 7); ctx.fill(); }
+    ctx.shadowBlur = 0;
+    scrub.value = Math.round((state.simT - t0) / (t1 - t0 || 1) * 1000); clock.textContent = fmtDT(new Date(state.simT)); showCounters(tot);
+    if (state.simT >= t1 && !state.particles.length) { state.playing = false; btn.textContent = "▶ Replay"; return; }
+    state.raf = requestAnimationFrame(frame);
+  }
+  const pulse = n => { const el = nsel.filter(d => d === n).select(".halo"); el.interrupt().attr("opacity", .9).attr("r", n.r + 3).transition().duration(600).attr("r", n.r + 12).attr("opacity", 0); };
+  btn.onclick = () => { if (state.playing) { state.playing = false; btn.textContent = "▶ Resume"; return; }
+    if (state.simT >= t1) { state.simT = t0; state.idx = 0; state.particles = []; }
+    state.playing = true; state.last = 0; btn.textContent = "❚❚ Pause"; state.raf = requestAnimationFrame(frame); };
+  scrub.oninput = () => { state.playing = false; btn.textContent = "▶ Resume"; state.simT = t0 + scrub.value / 1000 * (t1 - t0);
+    state.idx = evs.findIndex(e => e.t > state.simT); if (state.idx < 0) state.idx = evs.length; state.particles = []; ctx.clearRect(0, 0, W, H);
+    clock.textContent = fmtDT(new Date(state.simT)); showCounters(sumUpTo(state.simT)); };
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setTimeout(() => { if (replay === state && !state.playing) btn.click(); }, 500);
+}
+function nodeTip(n, c) {
+  if (n.kind === "victim") return [h("div", { class: "h" }, n.label || n.id), h("div", {}, "Paid ", h("b", {}, inr(n.value)), " into the ring")];
+  if (n.kind === "sink") return [h("div", { class: "h" }, n.label), h("div", {}, h("b", {}, inr(n.value)), " left the banking system here")];
+  const m = c.members.find(x => x.account_id === n.id);
+  return [h("div", { class: "h" }, h("span", { class: "mono" }, n.id), " · ", n.role), h("div", {}, "Risk ", h("b", {}, n.score.toFixed(2)), ` · ${m.bank} · ${m.segment.replace("_", " ")}`),
+    h("div", {}, "Victim credits ", h("b", {}, inr(m.victim_inflow)), " · cashed out ", h("b", {}, inr(m.cash_out))), h("div", { class: "faint" }, "Click to open the account")];
+}
+
+/* ---------- AI investigator ---------- */
+function investigatorPanel(c) {
+  const body = h("div", { id: "invBody", style: "display:grid;gap:12px" });
+  const btn = h("button", { class: "btn primary", id: "invBtn" }, c.investigation ? "Re-run investigation" : "Run AI investigation");
+  const p = h("div", { class: "panel" }, h("div", { class: "ph" }, h("h3", {}, "Investigator"), h("span", { class: "engine", id: "invEngine" }, ""), h("div", { style: "margin-left:auto" }, btn)), h("div", { class: "pb" }, body));
+  if (c.investigation) showReport(body, c.investigation, c, false);
+  else body.append(h("p", { class: "muted", style: "margin:0" }, "The investigator works the case like an analyst: it pulls the case facts, inspects accounts and flows, can run read-only SQL on the feature store, and drafts the Suspicious Transaction Report. Every tool call is shown so you can check the evidence."));
+  btn.onclick = () => runInvestigation(c, body, btn);
+  return p;
+}
+async function runInvestigation(c, body, btn) {
+  btn.disabled = true; body.replaceChildren(); const log = h("div", { class: "inv-log" }); body.append(log);
+  const steps = [];
+  const addStep = s => { steps.push(s); log.append(h("div", { class: "st" }, h("span", { class: "n" }, `#${s.n}`), h("div", {}, h("span", { class: s.blocked ? "blocked" : "tool" }, `${s.tool}(${s.args && Object.keys(s.args).length ? JSON.stringify(s.args) : ""})`), s.blocked ? h("span", { class: "blocked" }, "  blocked by guardrail") : null,
+    s.why ? h("div", { class: "why" }, s.why) : null), h("div", { class: "res" }, s.result_preview))); log.scrollTop = log.scrollHeight; };
+  const thinking = h("div", { class: "muted typing", style: "font-size:13px" }, "Working the case");
+  body.append(thinking);
+  try {
+    if (EMBED) {
+      const pre = EMBED.investigations[c.case_id];
+      for (const s of pre.steps) { await sleep(700); addStep(s); }
+      await sleep(900); thinking.remove();
+      demoState.inv[c.case_id] = { ...pre, at: new Date().toISOString() };
+      showReport(body, demoState.inv[c.case_id], c, true, log);
+    } else {
+      await new Promise((resolve, reject) => {
+        const es = new EventSource(`${BASE}/api/cases/${c.case_id}/investigate`);
+        es.onmessage = m => { const ev = JSON.parse(m.data);
+          if (ev.type === "step") addStep(ev);
+          else if (ev.type === "notice") log.append(h("div", { class: "why" }, ev.message));
+          else if (ev.type === "final") { thinking.remove(); showReport(body, { report: ev.report, engine: ev.engine, steps, at: ev.generated_at, tokens: ev.tokens, seconds: ev.seconds }, c, true, log); }
+          else if (ev.type === "error") { es.close(); reject(new Error(ev.error)); }
+          else if (ev.type === "done") { es.close(); resolve(); } };
+        es.onerror = () => { es.close(); reject(new Error("connection to the investigator was lost")); };
+      });
+    }
+  } catch (e) { thinking.remove(); body.append(h("div", { class: "note" }, "Investigation stopped: " + e.message)); }
+  btn.disabled = false; btn.textContent = "Re-run investigation";
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function showReport(body, inv, c, animate, log) {
+  const r = inv.report || {};
+  const eng = (body.parentNode && body.parentNode.parentNode && body.parentNode.parentNode.querySelector(".engine")) || $("#invEngine");
+  if (eng) eng.textContent = inv.engine ? `engine: ${inv.engine}` : "";
+  if (!log && inv.steps && inv.steps.length) { const l = h("details", {}, h("summary", { class: "muted", style: "cursor:pointer;font-size:13px" }, `${inv.steps.length} tool calls`), h("div", { class: "inv-log", style: "margin-top:8px" },
+    inv.steps.map(s => h("div", { class: "st" }, h("span", { class: "n" }, `#${s.n}`), h("div", {}, h("span", { class: "tool" }, s.tool), s.why ? h("div", { class: "why" }, s.why) : null), h("div", { class: "res" }, s.result_preview))))); body.append(l); }
+  const strText = buildSTR(r, c);
+  const rep = h("div", { class: "report" },
+    h("div", {}, h("div", { class: "eyebrow" }, `Finding · ${r.typology || c.typology} · confidence ${r.confidence || "–"}`), h("div", { class: "headline" }, r.headline || "")),
+    h("p", { style: "margin:0;color:var(--ink-2)" }, r.summary || ""),
+    h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:8px" }, "Evidence"), h("div", { class: "evidence" }, (r.evidence || []).map(e => h("div", {}, h("b", {}, e.claim), h("span", {}, e.data))))),
+    h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:6px" }, "Recommended account actions"), h("div", { class: "scroll" }, h("table", { class: "t" }, h("tbody", {}, (r.accounts || []).map(a => h("tr", {},
+      h("td", { class: "mono", style: "font-size:12px" }, h("a", { href: "#account-" + a.account_id }, a.account_id)), h("td", {}, a.role), h("td", {}, h("span", { class: "pill", style: a.action === "Freeze" ? "color:#ffb4b4;border-color:rgba(228,88,88,.45)" : "" }, a.action)), h("td", { class: "muted", style: "font-size:12.5px" }, a.reason))))))),
+    h("div", {}, h("div", { class: "eyebrow", style: "margin-bottom:6px" }, "Next steps"), h("ul", {}, (r.recommended_actions || []).map(x => h("li", {}, x)))),
+    h("div", { class: "str" }, h("div", { style: "display:flex;align-items:center;gap:10px" }, h("h3", {}, "Draft STR for FIU-IND"), h("button", { class: "btn", style: "margin-left:auto", onclick: ev => copyText(strText, ev.target) }, "Copy STR text")),
+      h("dl", {}, h("dt", {}, "Reporting entity"), h("dd", {}, "Sandbox bank (synthetic)"), h("dt", {}, "Accounts reported"), h("dd", { class: "mono", style: "font-size:12px" }, c.members.map(m => m.account_id).join(", ")),
+        h("dt", {}, "Period"), h("dd", {}, `${fmtDate(c.first_seen)} – ${fmtDate(c.last_seen)} 2026`), h("dt", {}, "Amount involved"), h("dd", {}, inr(c.victim_inflow || c.internal_volume, false)),
+        h("dt", {}, "Linked complaints"), h("dd", {}, `${c.complaints} (NCRP)`), h("dt", {}, "Grounds of suspicion"), h("dd", {}, r.str_grounds || ""))),
+    h("div", { class: "engine" }, `${inv.engine || ""}${inv.tokens ? ` · ${num(inv.tokens)} tokens` : ""}${inv.seconds ? ` · ${inv.seconds}s` : ""} · generated ${inv.at ? fmtDT(inv.at) : ""}. AI output must be reviewed by an analyst before filing.`));
+  if (animate) { rep.style.opacity = 0; rep.style.transition = "opacity .5s"; requestAnimationFrame(() => rep.style.opacity = 1); }
+  body.append(rep);
+}
+function buildSTR(r, c) {
+  return [`SUSPICIOUS TRANSACTION REPORT (DRAFT) - ${c.case_id}`, `Typology: ${r.typology || c.typology}`, `Period: ${c.first_seen.slice(0, 10)} to ${c.last_seen.slice(0, 10)}`,
+    `Accounts: ${c.members.map(m => `${m.account_id} (${m.role}, ${m.bank})`).join("; ")}`, `Amount involved: INR ${Math.round(c.victim_inflow || c.internal_volume).toLocaleString("en-IN")}`,
+    `Victims: ${c.n_victims}; linked NCRP complaints: ${c.complaints}`, "", "Grounds of suspicion:", r.str_grounds || "", "", "Evidence:", ...(r.evidence || []).map(e => `- ${e.claim}: ${e.data}`)].join("\n");
+}
+async function copyText(text, btn) { try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; } catch { const ta = h("textarea", { style: "position:fixed;opacity:0" }, text); document.body.append(ta); ta.select(); try { document.execCommand("copy"); btn.textContent = "Copied"; } catch { btn.textContent = "Select and copy manually"; } ta.remove(); } setTimeout(() => btn.textContent = "Copy STR text", 2000); }
+
+/* ============================== account 360 ============================== */
+RENDER.account = async (host, id) => {
+  const a = await api(`/api/accounts/${id}`);
+  crumbs(a.case_id ? h("a", { href: "#case-" + a.case_id, class: "mono" }, a.case_id) : h("a", { href: "#alerts" }, "Flagged accounts"), h("b", { class: "mono" }, a.account_id));
+  const f = a.features, imax = d3.max(a.reasons, r => r.impact) || 1;
+  const gauge = h("div", { id: "gauge" });
+  host.replaceChildren(
+    h("div", { class: "case-head" }, h("h1", {}, a.account_id), a.case_id ? h("a", { class: "pill", href: "#case-" + a.case_id }, "Member of ", h("span", { class: "mono" }, a.case_id)) : null,
+      a.reported ? h("span", { class: "pill" }, `${a.complaints} victim complaints`) : h("span", { class: "pill", style: "color:var(--gold);border-color:rgba(255,207,107,.35)" }, "Never reported by a victim"),
+      ...a.flags.map(x => h("span", { class: "pill faint" }, x === "expansion" ? "found by following the money" : x === "cycle" ? "cycle detection" : "risk model"))),
+    h("div", { class: "muted", style: "font-size:13px;margin-bottom:14px" }, `${a.segment.replace("_", " ")} · ${a.bank} · ${a.city} · ${a.kyc} KYC · opened ${fmtDate(a.opened_date)} ${a.opened_date.slice(0, 4)} · UPI ${a.vpa_masked}${a.age ? ` · holder age ${a.age}` : ""}`),
+    h("div", { class: "grid g-2e" },
+      panel("Why this account was flagged", h("div", { style: "display:grid;gap:14px" }, h("div", { class: "gauge" }, gauge, h("div", {}, h("div", { class: "eyebrow" }, "Mule risk"),
+        h("div", { style: "font:700 30px var(--display)" }, a.score.toFixed(2)), h("div", { class: "faint", style: "font-size:12.5px" }, `Rules baseline: ${a.rules_score.toFixed(2)}`))),
+        h("div", { class: "reasons" }, a.reasons.length ? a.reasons.map(r => h("div", { class: "reason" }, h("span", {}, r.label), h("div", { class: "bar", style: "--c:var(--crit);height:8px" }, h("i", { style: `width:${r.impact / imax * 100}%` })),
+          h("span", { class: "mono faint", style: "font-size:12px" }, FEATURE_TEXT[r.feature] ? FEATURE_TEXT[r.feature][1](f[r.feature] ?? 0) : ""))) :
+          h("div", { class: "note" }, "The model scores this account low. It was added to the case because most of its money came from flagged accounts, the layer victims never see.")),
+        h("div", { class: "faint", style: "font-size:12px" }, "Bars show each feature's push towards \"mule\" (SHAP contribution from the gradient-boosted model)."))),
+      panel("Money in and out, per day", h("div", {}, h("div", { class: "legend" }, h("span", {}, h("i", { class: "sq", style: "--c:var(--r-collector)" }), "Credits"), h("span", {}, h("i", { class: "sq", style: "--c:var(--r-cashout)" }), "Debits")), h("div", { id: "accDaily" })))),
+    h("div", { style: "margin-top:14px" }, panel("Behaviour profile", h("div", { class: "fgrid" }, Object.entries(FEATURE_TEXT).filter(([k]) => f[k] != null).map(([k, [label, fmt]]) => h("div", {}, h("div", { class: "k" }, label), h("div", { class: "v" }, fmt(f[k]))))))),
+    h("div", { class: "grid g-3", style: "margin-top:14px" },
+      panel("Top senders", cpTable(a.top_senders)), panel("Top recipients", cpTable(a.top_recipients)),
+      panel("Devices", h("div", { style: "display:grid;gap:10px" }, a.devices.map(d => h("div", { style: "display:grid;grid-template-columns:1fr auto;gap:2px" }, h("span", { class: "mono" }, d.device_id), h("span", { class: "muted" }, d.os),
+        h("span", { class: "faint", style: "font-size:12px" }, `first seen ${fmtDate(d.first_seen)} ${String(d.first_seen).slice(0, 4)}`), h("span", { style: `font-size:12px;color:${d.shared_with >= 3 ? "#ff9b9b" : "var(--ink-3)"}` }, `${d.shared_with} account${d.shared_with > 1 ? "s" : ""} on this phone`)))))),
+    h("div", { style: "margin-top:14px" }, panel("Recent transactions", h("div", { class: "scroll" }, h("table", { class: "t" }, h("thead", {}, h("tr", {}, ["When", "Direction", "Counterparty", "Channel", "Type", "Amount"].map((x, i) => h("th", { class: i === 5 ? "r" : "" }, x)))),
+      h("tbody", {}, a.recent.map(t => h("tr", {}, h("td", { class: "num", style: "white-space:nowrap" }, fmtDT(t.ts)), h("td", {}, t.dir === "in" ? h("span", { style: "color:var(--r-collector)" }, "← in") : h("span", { style: "color:var(--r-cashout)" }, "out →")),
+        h("td", { class: "mono", style: "font-size:12px" }, cpLink(t.dir === "in" ? t.src : t.dst)), h("td", {}, t.channel), h("td", { class: "muted" }, t.txn_type), h("td", { class: "r num" }, inr(t.amount, false))))))))));
+  drawGauge(gauge, a.score);
+  const dates = d3.range(61).map(i => new Date(Date.UTC(2026, 7, 1 + i)).toISOString().slice(0, 10));
+  mirrorBars($("#accDaily"), dates, a.daily.in, a.daily.out);
+};
+const cpLink = id => id === "ATM" ? "ATM cash" : EMBED ? (EMBED.accounts[id] ? h("a", { href: "#account-" + id }, id) : id) : h("a", { href: "#account-" + id }, id);
+function cpTable(rows) { return rows.length ? h("table", { class: "t" }, h("tbody", {}, rows.slice(0, 6).map(r => h("tr", {}, h("td", { class: "mono", style: "font-size:12px" }, cpLink(r.account_id)), h("td", { class: "r num faint" }, `${r.count}×`), h("td", { class: "r num" }, inr(r.sum)))))) : h("div", { class: "empty" }, "None"); }
+function drawGauge(host, v) {
+  const s = 84, r = 34, svg = svgEl("svg", { width: s, height: s, viewBox: `0 0 ${s} ${s}` });
+  const arc = d3.arc().innerRadius(r - 7).outerRadius(r).startAngle(-Math.PI * .75).cornerRadius(4);
+  const g = svgEl("g", { transform: `translate(${s / 2},${s / 2})` });
+  g.append(svgEl("path", { d: arc.endAngle(Math.PI * .75)(), fill: cssv("var(--surface-3)") }));
+  g.append(svgEl("path", { d: arc.endAngle(-Math.PI * .75 + Math.PI * 1.5 * v)(), fill: cssv(v >= .8 ? "var(--crit)" : v >= .4 ? "var(--warn)" : "var(--good)") }));
+  svg.append(g); host.append(svg);
+}
+function mirrorBars(host, dates, inn, out) {
+  const W = Math.max(host.clientWidth || 500, 280), H = 220, m = { l: 54, r: 8, t: 8, b: 22 }, mid = (H - m.b + m.t) / 2;
+  const mx = d3.max([...inn, ...out]) || 1, y = d3.scaleLinear().domain([0, mx]).range([0, mid - m.t]);
+  const x = d3.scaleBand().domain(d3.range(dates.length)).range([m.l, W - m.r]).padding(.18);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H });
+  svg.append(svgEl("line", { x1: m.l, x2: W - m.r, y1: mid, y2: mid, stroke: cssv("var(--line-2)") }));
+  [[mx, mid - y(mx)], [mx, mid + y(mx)]].forEach(([v, yy]) => { const t = svgEl("text", { x: m.l - 6, y: yy + 4, "text-anchor": "end" }); t.textContent = inr(v); svg.append(t); });
+  dates.forEach((d, i) => {
+    if (inn[i]) svg.append(svgEl("rect", { x: x(i), y: mid - y(inn[i]), width: x.bandwidth(), height: y(inn[i]), rx: 1.5, fill: cssv("var(--r-collector)") }));
+    if (out[i]) svg.append(svgEl("rect", { x: x(i), y: mid + 1, width: x.bandwidth(), height: y(out[i]), rx: 1.5, fill: cssv("var(--r-cashout)") }));
+    if (i % 10 === 0) { const t = svgEl("text", { x: x(i), y: H - 6 }); t.textContent = fmtDate(d); svg.append(t); }
+    const hit = svgEl("rect", { x: x(i) - 1, y: m.t, width: x.bandwidth() + 2, height: H - m.b - m.t, fill: "transparent" });
+    hit.addEventListener("pointermove", e => tip(e, [h("div", { class: "h" }, fmtDate(d)), h("div", {}, "In ", h("b", {}, inr(inn[i]))), h("div", {}, "Out ", h("b", {}, inr(out[i])))]));
+    hit.addEventListener("pointerleave", e => tip(e, null)); svg.append(hit);
+  });
+  host.replaceChildren(svg);
+}
+
+/* ============================== flagged accounts ============================== */
+RENDER.alerts = async host => {
+  crumbs(h("a", { href: "#overview" }, "Command center"), h("b", {}, "Flagged accounts"));
+  const rows = await api("/api/alerts");
+  let filt = "All";
+  const tb = h("tbody");
+  const draw = () => tb.replaceChildren(...rows.filter(r => filt === "All" || (filt === "Unreported" ? !r.reported : r.flags.includes(filt.toLowerCase()))).map(r => h("tr", { class: "click", onclick: () => location.hash = "account-" + r.account_id },
+    h("td", { class: "mono" }, r.account_id), h("td", {}, scoreTag(r.score)), h("td", {}, h("div", { class: "bar", style: `--c:${r.score >= .8 ? "var(--crit)" : r.score >= .4 ? "var(--warn)" : "var(--ink-3)"}` }, h("i", { style: `width:${r.score * 100}%` }))),
+    h("td", {}, r.segment.replace("_", " ")), h("td", {}, r.bank), h("td", {}, r.flags.map(f => f === "expansion" ? "money trail" : f).join(", ")), h("td", {}, r.reported ? "yes" : h("span", { style: "color:var(--gold)" }, "no")),
+    h("td", { class: "r num" }, inr(r.in_amt)), h("td", {}, r.case_id ? h("a", { href: "#case-" + r.case_id, class: "mono", onclick: e => e.stopPropagation() }, r.case_id) : "–"))));
+  host.replaceChildren(h("div", { class: "vhead" }, h("div", {}, h("h1", {}, "Flagged accounts"), h("p", {}, `${rows.length} accounts raised by the risk model, cycle detection, or by following money out of flagged accounts. ${rows.filter(r => !r.reported).length} of them have never been named in a victim complaint.`))),
+    h("div", { class: "panel" }, h("div", { class: "pb" }, h("div", { class: "chips" }, ["All", "Model", "Expansion", "Cycle", "Unreported"].map(v => h("button", { class: "chip" + (v === filt ? " on" : ""), onclick: e => { filt = v; e.target.parentNode.querySelectorAll(".chip").forEach(b => b.classList.toggle("on", b === e.target)); draw(); } }, v === "Expansion" ? "Money trail" : v)))),
+      h("div", { class: "scroll" }, h("table", { class: "t" }, h("thead", {}, h("tr", {}, ["Account", "Risk", "", "Segment", "Bank", "Found by", "Reported", "Inbound", "Case"].map((x, i) => h("th", { class: i === 7 ? "r" : "" }, x)))), tb))));
+  draw();
+};
+
+/* ============================== model lab ============================== */
+RENDER.model = async host => {
+  crumbs(h("b", {}, "Model lab"));
+  const m = await api("/api/model");
+  const mk = m.model_score.at_k, rk = m.rules_score.at_k;
+  const budgetVal = h("span", { class: "mono", style: "color:var(--accent)" }, "");
+  const slider = h("input", { type: "range", min: 10, max: 1000, step: 10, value: m.alert_budget, id: "budget", "aria-label": "Alert budget" });
+  const cards = h("div", { class: "vs" });
+  const pr = h("div", { id: "prc" }), pk = h("div", { id: "pk" });
+  const upd = () => {
+    const k = +slider.value; budgetVal.textContent = `${k} alerts / review cycle`;
+    const a = mk.find(x => x.k >= k) || mk.at(-1), b = rk.find(x => x.k >= k) || rk.at(-1);
+    const card = (title, color, x) => h("div", { class: "card" }, h("h3", {}, h("i", { style: `width:10px;height:10px;border-radius:50%;background:${color}` }), title),
+      h("dl", {}, h("dt", {}, "Precision"), h("dd", {}, pct(x.precision, 1)), h("dt", {}, "Mules caught"), h("dd", {}, `${Math.round(x.recall * m.n_mules)} of ${m.n_mules}`),
+        h("dt", {}, "Recall"), h("dd", {}, pct(x.recall, 1)), h("dt", {}, "Never-reported mules found"), h("dd", {}, `${x.unreported_found} of ${m.n_unreported_mules}`),
+        h("dt", {}, "Money through caught accounts"), h("dd", {}, inr(x.inflow_caught)), h("dt", {}, "Analyst time (20 min / alert)"), h("dd", {}, `${(k * 20 / 60).toFixed(0)} h`)));
+    cards.replaceChildren(card("Gradient-boosted model", "var(--accent)", a), card("Threshold rules (today)", "var(--serious)", b));
+    lineXY(pr, { series: [{ color: "var(--accent)", points: m.model_score.pr_curve.map(p => ({ x: p.recall, y: p.precision })) }, { color: "var(--serious)", points: m.rules_score.pr_curve.map(p => ({ x: p.recall, y: p.precision })) }],
+      xLabel: "Recall (share of all mules found)", xFmt: v => pct(v), yFmt: v => pct(v), marker: [{ x: a.recall, y: a.precision, color: "var(--accent)" }, { x: b.recall, y: b.precision, color: "var(--serious)" }] });
+    lineXY(pk, { series: [{ color: "var(--accent)", points: mk.map(p => ({ x: p.k, y: p.recall })) }, { color: "var(--serious)", points: rk.map(p => ({ x: p.k, y: p.recall })) }, { color: "var(--gold)", points: mk.map(p => ({ x: p.k, y: p.unreported_found / m.n_unreported_mules })) }],
+      xLabel: "Alerts reviewed", xDomain: [0, 1200], yFmt: v => pct(v), marker: [{ x: k, y: a.recall, color: "var(--accent)" }] });
+  };
+  slider.oninput = upd;
+  const tbl = rows => h("table", { class: "t" }, h("tbody", {}, rows));
+  host.replaceChildren(
+    h("div", { class: "vhead" }, h("div", {}, h("h1", {}, "Model lab"), h("p", {}, `A LightGBM classifier trained only on what a bank knows: accounts named in victim complaints (${m.n_reported} of ${m.n_accounts}). It is scored against hidden ground truth (${m.n_mules} real mules, ${m.n_unreported_mules} never reported) with 5-fold cross-validation grouped by ring, so no ring is in training and test at once.`))),
+    h("div", { class: "grid g-kpi" },
+      ...[["PR-AUC, model", m.model_score.pr_auc.toFixed(3), `rules baseline ${m.rules_score.pr_auc.toFixed(3)}`], ["ROC-AUC, model", m.model_score.roc_auc.toFixed(3), `rules baseline ${m.rules_score.roc_auc.toFixed(3)}`],
+        ["Rings recovered as cases", `${m.cases.rings_found} / ${m.cases.rings_total}`, `mean case purity ${pct(m.cases.mean_purity)}`],
+        ["Found by following money", num(m.cases.expansion_true_mules), "mules the model scored low"]].map(([k, v, s]) => h("div", { class: "panel kpi" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v), h("div", { class: "s" }, s)))),
+    h("div", { class: "grid g-2e", style: "margin-top:14px" },
+      panel("Alert budget: what does a review cycle buy?", h("div", { class: "budget" }, h("div", { style: "display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap" }, h("span", { class: "muted" }, "Drag to set how many alerts analysts can review"), budgetVal), slider, cards,
+        h("div", { class: "note" }, "Precision drops as the budget grows, but recall of never-reported mules keeps rising. Cases add graph expansion on top of the model, which is how the cash-out layer is found."))),
+      panel("Precision vs recall", h("div", {}, h("div", { class: "legend" }, h("span", {}, h("i", { class: "ln", style: "--c:var(--accent)" }), "Model"), h("span", {}, h("i", { class: "ln", style: "--c:var(--serious)" }), "Rules")), pr))),
+    h("div", { class: "grid g-2e", style: "margin-top:14px" },
+      panel("Recall as the review budget grows", h("div", {}, h("div", { class: "legend" }, h("span", {}, h("i", { class: "ln", style: "--c:var(--accent)" }), "Model, all mules"), h("span", {}, h("i", { class: "ln", style: "--c:var(--serious)" }), "Rules, all mules"), h("span", {}, h("i", { class: "ln", style: "--c:var(--gold)" }), "Model, never-reported mules")), pk)),
+      panel("Recall by typology at 300 alerts", h("div", { class: "scroll" }, tbl([h("tr", {}, ["Typology", "Mules", "Model", "Rules"].map((x, i) => h("th", { class: i ? "r" : "" }, x))),
+        ...m.by_typology.map(t => h("tr", {}, h("td", {}, t.typology), h("td", { class: "r num" }, t.mules), h("td", { class: "r num" }, pct(t.model_recall)), h("td", { class: "r num", style: t.rules_recall < .5 ? "color:#ff9b9b" : "" }, pct(t.rules_recall))))]),
+        h("div", { class: "eyebrow", style: "margin:14px 0 6px" }, "By role in the ring"), tbl([h("tr", {}, ["Role", "Mules", "Ever reported", "Model recall"].map((x, i) => h("th", { class: i ? "r" : "" }, x))),
+          ...m.by_role.map(t => h("tr", {}, h("td", {}, t.role), h("td", { class: "r num" }, t.mules), h("td", { class: "r num", style: t.reported_share === 0 ? "color:var(--gold)" : "" }, pct(t.reported_share)), h("td", { class: "r num" }, pct(t.model_recall))))])))),
+    h("div", { class: "grid g-2e", style: "margin-top:14px" },
+      panel("What drives the score", hbars(m.importance.slice(0, 10).map(i => ({ label: i.label, value: i.gain, color: "var(--accent)" })), { fmt: v => pct(v, 1) })),
+      panel("Score distribution", h("div", {}, h("div", { class: "legend" }, h("span", {}, h("i", { class: "sq", style: "--c:var(--ink-3)" }), "All accounts (log scale)"), h("span", {}, h("i", { class: "sq", style: "--c:var(--crit)" }), "Real mules")), h("div", { id: "hist" }),
+        h("div", { class: "note", style: "margin-top:10px" }, `Analyst feedback so far: ${Object.entries(m.feedback || {}).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(", ") || "none yet. Case decisions are stored as labels for the next training run."}`)))));
+  upd(); histogram($("#hist"), m.score_hist);
+};
+function histogram(host, hd) {
+  const W = Math.max(host.clientWidth || 400, 260), H = 200, m = { l: 40, r: 8, t: 8, b: 26 };
+  const x = d3.scaleBand().domain(hd.bins).range([m.l, W - m.r]).padding(.12);
+  const y = d3.scaleLog().domain([1, d3.max(hd.all) || 10]).range([H - m.b, m.t]).clamp(true);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H });
+  [1, 10, 100, 1000, 10000].filter(t => t <= y.domain()[1]).forEach(t => { svg.append(svgEl("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: cssv("var(--line)") })); const tx = svgEl("text", { x: m.l - 6, y: y(t) + 4, "text-anchor": "end" }); tx.textContent = num(t); svg.append(tx); });
+  hd.bins.forEach((b, i) => { const ha = hd.all[i], hm = hd.mules[i];
+    if (ha) svg.append(svgEl("rect", { x: x(b), y: y(ha), width: x.bandwidth(), height: H - m.b - y(ha), fill: cssv("var(--ink-3)"), "fill-opacity": .5, rx: 1.5 }));
+    if (hm) svg.append(svgEl("rect", { x: x(b) + x.bandwidth() * .2, y: y(hm), width: x.bandwidth() * .6, height: H - m.b - y(hm), fill: cssv("var(--crit)"), rx: 1.5 }));
+    if (i % 8 === 0) { const t = svgEl("text", { x: x(b), y: H - 8 }); t.textContent = (+b).toFixed(1); svg.append(t); }
+    const hit = svgEl("rect", { x: x(b), y: m.t, width: x.bandwidth(), height: H - m.b - m.t, fill: "transparent" });
+    hit.addEventListener("pointermove", e => tip(e, [h("div", { class: "h" }, `score ${(+b).toFixed(3)} – ${(+b + .025).toFixed(3)}`), h("div", {}, h("b", {}, num(ha)), " accounts, ", h("b", {}, num(hm)), " real mules")]));
+    hit.addEventListener("pointerleave", e => tip(e, null)); svg.append(hit); });
+  const xl = svgEl("text", { x: (W + m.l) / 2, y: H, "text-anchor": "middle" }); xl.textContent = "risk score"; svg.append(xl);
+  host.replaceChildren(svg);
+}
+
+/* ============================== pipeline ============================== */
+RENDER.pipeline = async host => {
+  crumbs(h("b", {}, "Data pipeline"));
+  const p = await api("/api/pipeline");
+  const checks = p.stages.flatMap(s => s.checks.map(c => ({ ...c, stage: s.name })));
+  host.replaceChildren(
+    h("div", { class: "vhead" }, h("div", {}, h("h1", {}, "Data pipeline"), h("p", {}, `Bronze → silver → gold in DuckDB SQL, graph analytics in NetworkX, scoring in LightGBM. Last run ${fmtDT(p.finished_at)} UTC. ${checks.filter(c => c.status === "pass").length} of ${checks.length} data-quality checks passed.`))),
+    h("div", { class: "dag" }, p.stages.map((s, i) => h("div", { class: "stage" }, h("div", { style: "display:flex;justify-content:space-between;gap:8px" }, h("span", { class: `kind ${s.kind}` }, `${String(i + 1).padStart(2, "0")} · ${s.kind}`), h("span", { class: "faint mono", style: "font-size:11px" }, s.duration_ms != null ? `${(s.duration_ms / 1000).toFixed(1)} s` : "")),
+      h("b", {}, s.name), h("div", { class: "faint mono", style: "font-size:11px" }, s.outputs.join(", ")),
+      h("div", { class: "rows" }, Object.entries(s.rows).map(([k, v]) => h("span", {}, h("b", {}, num(v)), " ", k))),
+      s.checks.length ? h("div", { style: "font-size:12px;color:var(--good)" }, `✓ ${s.checks.filter(c => c.status === "pass").length}/${s.checks.length} checks`) : null))),
+    h("div", { class: "grid g-2e", style: "margin-top:14px" },
+      panel("Data-quality checks", h("div", { class: "checks" }, checks.map(c => h("div", { class: "check" }, h("i", { class: c.status }, c.status), h("span", {}, c.name), h("span", { class: "faint mono", style: "margin-left:auto;font-size:12px" }, c.stage))))),
+      panel("Feature SQL: time from credit to next debit", h("pre", { class: "code", html: SQL_SNIPPET }))));
+};
+const SQL_SNIPPET = `<span class="cm">-- How fast does money leave after it lands? (ASOF join)</span>
+<span class="kw">CREATE TABLE</span> gold.dwell <span class="kw">AS</span>
+<span class="kw">SELECT</span> i.account_id, i.ts, i.amount,
+       <span class="fn">date_diff</span>('minute', i.ts, o.ts) <span class="kw">AS</span> dwell_min
+<span class="kw">FROM</span> gold.inflow i
+<span class="kw">ASOF LEFT JOIN</span> gold.outflow o
+  <span class="kw">ON</span> i.account_id = o.account_id <span class="kw">AND</span> o.ts >= i.ts;
+
+<span class="cm">-- Busiest hour of credits (window over a time range)</span>
+<span class="kw">SELECT</span> account_id, <span class="fn">MAX</span>(n_1h) <span class="kw">FROM</span> (
+  <span class="kw">SELECT</span> account_id, <span class="fn">COUNT</span>(*) <span class="kw">OVER</span> (
+    <span class="kw">PARTITION BY</span> account_id <span class="kw">ORDER BY</span> ts
+    <span class="kw">RANGE BETWEEN INTERVAL</span> 1 <span class="kw">HOUR PRECEDING AND CURRENT ROW</span>) n_1h
+  <span class="kw">FROM</span> gold.inflow) <span class="kw">GROUP BY</span> 1;`;
+
+/* ============================== boot ============================== */
+(async function boot() {
+  try {
+    const cfg = await api("/api/config");
+    $("#envDot").classList.toggle("off", !cfg.live); $("#envText").textContent = cfg.live ? `Live API · ${location.host}` : "Demo snapshot (read-only)";
+    $("#llmText").textContent = cfg.llm ? `Investigator: ${cfg.llm.provider} · ${cfg.llm.model.split("/").pop()}` : (cfg.live ? "Investigator: rule-based (no LLM key)" : "Investigator: recorded run");
+    const [cases, alerts] = await Promise.all([api("/api/cases"), api("/api/alerts")]);
+    $("#navCases").textContent = cases.length; $("#navAlerts").textContent = alerts.length;
+    $("#qlist").replaceChildren(...cases.map(c => h("option", { value: c.case_id })), ...alerts.slice(0, 200).map(a => h("option", { value: a.account_id })));
+  } catch (e) { console.error(e); }
+  route();
+})();
+</script>
+</body>
+</html>

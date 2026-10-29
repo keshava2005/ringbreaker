@@ -1,0 +1,14 @@
+#!/bin/bash
+# First boot only: write settings, fetch the bundle, run the idempotent bootstrap.
+set -euo pipefail
+cat > /etc/ringbreaker.env <<EOF
+REGION=${region}
+BUCKET=${bucket}
+KEY=${key}
+PARAM_PREFIX=${param_prefix}
+EOF
+chmod 600 /etc/ringbreaker.env
+dnf install -y -q unzip
+aws s3 cp --region ${region} s3://${bucket}/${key} /tmp/first.zip --only-show-errors
+mkdir -p /tmp/first && unzip -q -o /tmp/first.zip deploy/bootstrap.sh -d /tmp/first
+bash /tmp/first/deploy/bootstrap.sh

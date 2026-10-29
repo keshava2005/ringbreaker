@@ -1,0 +1,33 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pytest httpx
+      - run: python -m pytest -q
+      - name: Build demo snapshot
+        run: python -m ringbreaker build && python -m ringbreaker export-demo
+      - uses: actions/upload-artifact@v4
+        with: { name: ringbreaker-demo, path: dist/ringbreaker-demo.html }
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt (advisory; run `terraform fmt` locally to fix)
+        working-directory: deploy/terraform
+        continue-on-error: true
+        run: terraform fmt -check -diff
+      - name: Terraform validate
+        working-directory: deploy/terraform
+        run: |
+          mkdir -p ../.build && touch ../.build/ringbreaker-app.zip
+          terraform init -backend=false
+          terraform validate
+      - name: Bootstrap script syntax
+        run: bash -n deploy/bootstrap.sh
